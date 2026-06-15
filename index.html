@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AEROTWIN · 成都天府国际机场 TFU · 调度算法 A/B 影子仿真</title>
+<style>
+  :root {
+    --bg: #070b14; --panel: rgba(11,16,28,.9); --border: #1c2740;
+    --text: #dfe6f3; --dim: #7a8aa8; --accent: #ff5347;
+    --green: #3ddc97; --amber: #ffb454; --blue: #5aa9ff;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); font-family: var(--mono); color: var(--text); }
+  #scene { position: absolute; inset: 0; }
+  .panel { position: absolute; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; backdrop-filter: blur(8px); }
+  button {
+    background: transparent; color: var(--dim); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 700;
+  }
+  button.on { background: var(--accent); color: #0a0c12; border-color: var(--accent); }
+  button.on-blue { background: var(--blue); color: #0a0c12; border-color: var(--blue); }
+  button.warn { border-color: var(--amber); color: var(--amber); }
+  button.closed { border-color: var(--accent); color: var(--accent); animation: atPulse 1.2s infinite; }
+  button:disabled { cursor: default; }
+  @keyframes atPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  #topbar { top: 14px; left: 14px; right: 14px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+  .logo { font-weight: 900; font-size: 15px; letter-spacing: 2px; white-space: nowrap; }
+  .logo b { color: var(--accent); }
+  .logo small { color: var(--dim); font-size: 11px; margin-left: 10px; font-weight: 400; }
+  #clock { margin-left: auto; font-size: 19px; font-weight: 700; letter-spacing: 2px; }
+  .btn-group { display: flex; gap: 6px; }
+  #flightPanel { top: 80px; left: 14px; width: 252px; bottom: 14px; display: flex; flex-direction: column; }
+  #flightHeader { padding: 10px 14px; font-size: 11px; color: var(--dim); letter-spacing: 2px; border-bottom: 1px solid var(--border); }
+  #flightHeader em { color: var(--amber); font-style: normal; }
+  #flightList { overflow-y: auto; flex: 1; padding: 6px 8px; }
+  #flightList::-webkit-scrollbar { width: 5px; }
+  #flightList::-webkit-scrollbar-thumb { background: #26334f; border-radius: 3px; }
+  .frow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; border: 1px solid transparent; }
+  .frow.sel { background: rgba(255,83,71,.12); border-color: var(--accent); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .fcs { font-size: 12px; font-weight: 700; width: 62px; }
+  .forig { font-size: 10px; color: var(--dim); width: 30px; }
+  .fph { font-size: 10px; margin-left: auto; }
+  #kpiPanel { top: 80px; right: 14px; width: 236px; padding: 14px; }
+  .kpi-title { font-size: 11px; color: var(--dim); letter-spacing: 2px; margin-bottom: 8px; }
+  .cmp-grid { display: grid; grid-template-columns: 1fr 52px 52px; gap: 4px; font-size: 11px; margin-bottom: 6px; align-items: center; }
+  .cmp-grid .h { font-size: 10px; font-weight: 800; text-align: right; }
+  .cmp-grid .v { text-align: right; font-weight: 700; }
+  .cmp-grid .k { color: var(--dim); }
+  .win { color: var(--green) !important; }
+  .divider { border-top: 1px solid var(--border); margin: 8px 0; padding-top: 8px; }
+  .rw-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; }
+  .bar { height: 4px; background: #141d33; border-radius: 2px; margin-bottom: 8px; }
+  .bar > div { height: 100%; border-radius: 2px; background: var(--blue); transition: width .4s; }
+  #detail { display: none; }
+  #detail .callsign { font-size: 14px; font-weight: 800; color: var(--accent); }
+  #detail .sub { font-size: 11px; color: var(--dim); margin-bottom: 6px; }
+  #logPanel { bottom: 14px; left: 280px; right: 264px; padding: 8px 14px; max-height: 110px; overflow: hidden; }
+  #logTitle { font-size: 10px; color: var(--dim); letter-spacing: 2px; margin-bottom: 4px; }
+  .ev { font-size: 11px; color: var(--dim); line-height: 1.6; }
+  .ev:first-of-type { color: var(--text); }
+  .ev b { color: var(--accent); margin-right: 8px; font-weight: 400; }
+  #label {
+    position: absolute; display: none; transform: translate(-50%, -130%); background: var(--accent);
+    color: #0a0c12; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; pointer-events: none; z-index: 10;
+  }
+  body.day {
+    --bg: #aedcf5; --panel: rgba(255,255,255,.88); --border: #b9cade;
+    --text: #1d2c44; --dim: #5b6d8d;
+  }
+  body.day .bar { background: #d9e3f0; }
+  body.day #flightList::-webkit-scrollbar-thumb { background: #b9c6da; }
+  @media (max-width: 900px) {
+    #flightPanel { display: none; } #logPanel { left: 14px; }
+  }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<div id="label"></div>
+
+<div id="topbar" class="panel">
+  <div class="logo"><b>天府</b>TWIN<small>成都天府国际机场 TFU · 调度算法 A/B 影子仿真</small></div>
+  <div class="btn-group">
+    <button id="btnFcfs">基线 FCFS</button>
+    <button id="btnSmart" class="on">智能调度</button>
+  </div>
+  <div id="clock">06:00:00</div>
+  <div class="btn-group">
+    <button data-speed="1">1×</button>
+    <button data-speed="10" class="on">10×</button>
+    <button data-speed="60">60×</button>
+    <button id="btnPause">⏸</button>
+  </div>
+  <button id="btnStorm" class="warn">⛈ 雷暴关闭 02R</button>
+  <button id="btnTheme">🌙 夜间</button>
+</div>
+
+<div id="flightPanel" class="panel">
+  <div id="flightHeader">等待首班进港…</div>
+  <div id="flightList"></div>
+</div>
+
+<div id="kpiPanel" class="panel">
+  <div class="kpi-title">算法对比（同一时刻表）</div>
+  <div class="cmp-grid"><span></span><span class="h" style="color:var(--blue)">FCFS</span><span class="h" style="color:var(--accent)">智能</span></div>
+  <div id="cmpRows"></div>
+  <div class="divider kpi-title" id="utilTitle">跑道占用率（智能）</div>
+  <div id="rwRows"></div>
+  <div class="divider" id="detail">
+    <div class="callsign"></div><div class="sub"></div><div class="kv"></div>
+  </div>
+</div>
+
+<div id="logPanel" class="panel">
+  <div id="logTitle">塔台事件 · 拖拽旋转 / 滚轮缩放 / 点击飞机查看</div>
+  <div id="logBody"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ============================================================
+   AEROTWIN v2 web · 仿真内核（与渲染解耦的状态机 + 资源调度）
+   ============================================================ */
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+const RWY = {
+  A: { z: -80, name: "02L", holdZ: -62, exitX: 130, outX: -200 },
+  B: { z: -140, name: "02R", holdZ: -122, exitX: 158, outX: -225 },
+};
+const GATE_COUNT = 14;
+const gateX = (i) => -127 + i * 19.5;
+const GATE_Z = -10, IN_TAXI_Z = -50, OUT_TAXI_Z = -30;
+
+/* 川航为天府主基地航司，重复列入以提高占比 */
+const AIRLINES = [["3U","川航"],["3U","川航"],["3U","川航"],["EU","成都航"],["CA","国航"],["MU","东航"],["CZ","南航"],["TV","西藏航"],["MF","厦航"],["8L","祥鹏"],["HU","海航"],["ZH","深航"]];
+const CITIES = ["北京","上海","广州","深圳","西安","重庆","昆明","拉萨","杭州","三亚","贵阳","乌鲁木齐","南京","武汉","哈尔滨","郑州"];
+
+const PHASE_LABEL = {
+  holding:"盘旋等待", approach:"进近", landing:"着陆滑跑", taxiIn:"滑行入位",
+  atGate:"停靠登机", pushback:"推出", taxiOut:"滑行离场", holdShort:"等待起飞",
+  takeoff:"起飞爬升", departed:"已离场",
+};
+const PHASE_COLOR = {
+  holding:"#ffb454", approach:"#5aa9ff", landing:"#5aa9ff", taxiIn:"#7a8aa8",
+  atGate:"#3ddc97", pushback:"#7a8aa8", taxiOut:"#7a8aa8", holdShort:"#ffb454",
+  takeoff:"#ff5347", departed:"#4a5874",
+};
+const SPEED = { approach:5.5, landing:6.0, taxiIn:1.5, pushback:0.5, taxiOut:1.6, takeoff:5.2 };
+
+/* ------- 路径 ------- */
+function makeRoute(pts) {
+  const segs = []; let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const len = pts[i].distanceTo(pts[i + 1]);
+    segs.push({ a: pts[i], b: pts[i + 1], len }); total += len;
+  }
+  return { segs, total, d: 0 };
+}
+function sampleRoute(route, outPos, outDir) {
+  let d = Math.min(route.d, route.total);
+  for (let i = 0; i < route.segs.length; i++) {
+    const s = route.segs[i];
+    if (d <= s.len || i === route.segs.length - 1) {
+      const t = s.len > 0 ? Math.min(d / s.len, 1) : 1;
+      outPos.lerpVectors(s.a, s.b, t);
+      outDir.subVectors(s.b, s.a).normalize();
+      return;
+    }
+    d -= s.len;
+  }
+}
+const approachRoute = (rz) => makeRoute([V(-470,56,rz), V(-265,13,rz), V(-152,0.7,rz)]);
+const landingRoute = (rw) => makeRoute([V(-152,0.7,rw.z), V(rw.exitX,0.7,rw.z)]);
+function taxiInRoute(rw, gx) {
+  const pts = [V(rw.exitX,0.7,rw.z)];
+  if (rw.name === "02R") pts.push(V(205,0.7,rw.z), V(205,0.7,IN_TAXI_Z));
+  else pts.push(V(rw.exitX,0.7,IN_TAXI_Z));
+  pts.push(V(gx,0.7,IN_TAXI_Z), V(gx,0.7,GATE_Z));
+  return makeRoute(pts);
+}
+const pushbackRoute = (gx) => makeRoute([V(gx,0.7,GATE_Z), V(gx,0.7,OUT_TAXI_Z)]);
+const taxiOutRoute = (rw, gx) => makeRoute([V(gx,0.7,OUT_TAXI_Z), V(rw.outX,0.7,OUT_TAXI_Z), V(rw.outX,0.7,rw.holdZ)]);
+const takeoffRoute = (rw) => makeRoute([V(rw.outX,0.7,rw.holdZ), V(-176,0.7,rw.z), V(150,0.7,rw.z), V(470,64,rw.z)]);
+const taxiInDist = (rw, gx) => rw.name === "02R" ? (205 - rw.exitX) + 90 + (205 - gx) + 40 : (rw.exitX - gx) + 70;
+
+/* ------- 同种子时刻表 ------- */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const SEED = 20260611;
+
+function createSim(strategy) {
+  const rng = mulberry32(SEED);
+  const sim = {
+    strategy, t: 0, clockBase: 6 * 3600,
+    flights: [], schedule: [], schedIdx: 0, nextHoldSlot: 0,
+    runways: {
+      A: Object.assign({}, RWY.A, { key:"A", occupiedBy:null, closedUntil:0, busy:0 }),
+      B: Object.assign({}, RWY.B, { key:"B", occupiedBy:null, closedUntil:0, busy:0 }),
+    },
+    gates: Array.from({ length: GATE_COUNT }, (_, i) => ({ i, x: gateX(i), occupiedBy: null })),
+    stats: { landed:0, departed:0, onTime:0, delaySum:0, taxiInSum:0, taxiInN:0 },
+    events: [],
+  };
+  let t = 15;
+  for (let i = 0; i < 90; i++) {
+    const pick = AIRLINES[Math.floor(rng() * AIRLINES.length)];
+    sim.schedule.push({
+      id: i, callsign: pick[0] + (1000 + Math.floor(rng() * 8999)),
+      airline: pick[1], origin: CITIES[Math.floor(rng() * CITIES.length)],
+      sched: t, turnaround: 320 + rng() * 260,
+    });
+    t += 38 + rng() * 40;
+  }
+  return sim;
+}
+
+const rwOpen = (rw, t) => t >= rw.closedUntil;
+const log = (sim, msg) => { sim.events.unshift({ t: sim.t, msg }); if (sim.events.length > 40) sim.events.pop(); };
+const freeOpenRunways = (sim) => ["A","B"].map((k) => sim.runways[k]).filter((r) => rwOpen(r, sim.t) && !r.occupiedBy);
+
+function pickLandingRunway(sim) {
+  const free = freeOpenRunways(sim);
+  if (!free.length) return null;
+  if (sim.strategy === "fcfs")
+    return free.find((r) => r.key === "A") || free.find((r) => r.key === "B") || null;
+  return free.sort((a, b) => a.busy - b.busy)[0];
+}
+function pickTakeoffRunway(sim, currentKey) {
+  if (sim.strategy === "fcfs") {
+    const rw = sim.runways.B;
+    return rwOpen(rw, sim.t) && !rw.occupiedBy ? rw : null;
+  }
+  const free = freeOpenRunways(sim);
+  if (!free.length) return null;
+  const cur = free.find((r) => r.key === currentKey);
+  return cur || free.sort((a, b) => a.busy - b.busy)[0];
+}
+function pickGate(sim, rw) {
+  const free = sim.gates.filter((g) => !g.occupiedBy);
+  if (!free.length) return null;
+  if (sim.strategy === "fcfs") return free[0];
+  return free.sort((a, b) => taxiInDist(rw, a.x) - taxiInDist(rw, b.x))[0];
+}
+function advance(f, speed, dt) {
+  f.route.d += speed * dt;
+  sampleRoute(f.route, f.pos, f.dir);
+  return f.route.d >= f.route.total;
+}
+
+function stepFlight(sim, f, dt) {
+  switch (f.phase) {
+    case "holding": {
+      f.holdAngle += 0.16 * dt;
+      const cx = -480, cz = -110 + (f.holdSlot % 3) * 26, cy = 58 + (f.holdSlot % 4) * 7, r = 52;
+      f.pos.set(cx + Math.cos(f.holdAngle) * r, cy, cz + Math.sin(f.holdAngle) * r * 0.55);
+      f.dir.set(-Math.sin(f.holdAngle), 0, Math.cos(f.holdAngle) * 0.55).normalize();
+      const rw = pickLandingRunway(sim);
+      if (!rw) break;
+      const gate = pickGate(sim, rw);
+      if (!gate) break;
+      gate.occupiedBy = f.id; f.gate = gate;
+      rw.occupiedBy = f.id; f.rwy = rw;
+      f.delay = sim.t - f.sched;
+      f.phase = "approach"; f.route = approachRoute(rw.z);
+      log(sim, f.callsign + " 获准进近 跑道" + rw.name + " → 机位" + (gate.i + 1));
+      break;
+    }
+    case "approach":
+      if (advance(f, SPEED.approach, dt)) {
+        f.phase = "landing"; f.route = landingRoute(f.rwy);
+        log(sim, f.callsign + " 跑道" + f.rwy.name + " 接地");
+      }
+      break;
+    case "landing":
+      if (advance(f, SPEED.landing, dt)) {
+        f.rwy.occupiedBy = null;
+        sim.stats.landed++; sim.stats.delaySum += Math.max(0, f.delay);
+        if (f.delay < 90) sim.stats.onTime++;
+        f.taxiStart = sim.t;
+        f.phase = "taxiIn"; f.route = taxiInRoute(f.rwy, f.gate.x);
+      }
+      break;
+    case "taxiIn":
+      if (advance(f, SPEED.taxiIn, dt)) {
+        sim.stats.taxiInSum += sim.t - f.taxiStart; sim.stats.taxiInN++;
+        f.phase = "atGate"; f.boardUntil = sim.t + f.turnaround;
+        log(sim, f.callsign + " 停靠机位 " + (f.gate.i + 1));
+      }
+      break;
+    case "atGate":
+      if (sim.t >= f.boardUntil) { f.phase = "pushback"; f.backward = true; f.route = pushbackRoute(f.gate.x); }
+      break;
+    case "pushback":
+      if (advance(f, SPEED.pushback, dt)) {
+        f.backward = false; f.gate.occupiedBy = null;
+        if (sim.strategy === "fcfs") f.outRwyKey = "B";
+        else {
+          f.outRwyKey = (sim.runways.A.busy <= sim.runways.B.busy && rwOpen(sim.runways.A, sim.t)) ? "A" : "B";
+          if (!rwOpen(sim.runways[f.outRwyKey], sim.t)) f.outRwyKey = "A";
+        }
+        f.phase = "taxiOut"; f.route = taxiOutRoute(sim.runways[f.outRwyKey], f.gate.x);
+      }
+      break;
+    case "taxiOut":
+      if (advance(f, SPEED.taxiOut, dt)) {
+        f.phase = "holdShort";
+        const n = sim.flights.filter((o) => o !== f && o.phase === "holdShort" && o.outRwyKey === f.outRwyKey).length;
+        f.pos.z += Math.min(n, 4) * 9;
+      }
+      break;
+    case "holdShort": {
+      if (sim.strategy === "smart") {
+        const cur = sim.runways[f.outRwyKey];
+        if (!rwOpen(cur, sim.t)) {
+          const altKey = f.outRwyKey === "B" ? "A" : "B";
+          const alt = sim.runways[altKey];
+          if (rwOpen(alt, sim.t)) {
+            f.outRwyKey = altKey; f.phase = "taxiOut";
+            f.route = makeRoute([V(cur.outX,0.7,cur.holdZ), V(alt.outX,0.7,alt.holdZ)]);
+            log(sim, f.callsign + " 改道跑道" + alt.name + " 离场");
+            break;
+          }
+        }
+      }
+      const rw = pickTakeoffRunway(sim, f.outRwyKey);
+      if (rw) {
+        f.outRwyKey = rw.key;
+        rw.occupiedBy = f.id; f.rwy = rw;
+        f.phase = "takeoff"; f.route = takeoffRoute(rw);
+        log(sim, f.callsign + " 跑道" + rw.name + " 起飞");
+      }
+      break;
+    }
+    case "takeoff":
+      if (f.pos.x > 200 && f.rwy.occupiedBy === f.id) f.rwy.occupiedBy = null;
+      if (advance(f, SPEED.takeoff, dt)) { f.phase = "departed"; sim.stats.departed++; }
+      break;
+  }
+}
+
+function stepSim(sim, dt) {
+  sim.t += dt;
+  while (sim.schedIdx < sim.schedule.length && sim.t >= sim.schedule[sim.schedIdx].sched) {
+    const s = sim.schedule[sim.schedIdx++];
+    sim.flights.push(Object.assign({}, s, {
+      phase: "holding", holdAngle: (s.id * 1.7) % (Math.PI * 2),
+      holdSlot: sim.nextHoldSlot++, pos: V(-480, 60, -110), dir: V(1, 0, 0),
+      route: null, gate: null, rwy: null, delay: 0, backward: false, outRwyKey: "B",
+    }));
+  }
+  for (const f of sim.flights) if (f.phase !== "departed") stepFlight(sim, f, dt);
+  for (const k of ["A","B"]) if (sim.runways[k].occupiedBy) sim.runways[k].busy += dt;
+}
+
+function snapshotKpi(sim) {
+  const active = sim.flights.filter((f) => f.phase !== "departed");
+  return {
+    active: active.length,
+    holding: active.filter((f) => f.phase === "holding").length,
+    landed: sim.stats.landed, departed: sim.stats.departed,
+    onTime: sim.stats.landed ? Math.round((sim.stats.onTime / sim.stats.landed) * 100) : 100,
+    avgDelay: sim.stats.landed ? Math.round(sim.stats.delaySum / sim.stats.landed) : 0,
+    avgTaxi: sim.stats.taxiInN ? Math.round(sim.stats.taxiInSum / sim.stats.taxiInN) : 0,
+    utilA: sim.t > 1 ? Math.round((sim.runways.A.busy / sim.t) * 100) : 0,
+    utilB: sim.t > 1 ? Math.round((sim.runways.B.busy / sim.t) * 100) : 0,
+  };
+}
+
+/* ============================================================
+   渲染层（three.js）
+   ============================================================ */
+function buildPlaneMesh() {
+  const g = new THREE.Group();
+  const body = new THREE.MeshStandardMaterial({ color: 0xd8dfeb, roughness: .45, metalness: .35 });
+  const acc = new THREE.MeshStandardMaterial({ color: 0xff5347, roughness: .4, metalness: .3, emissive: 0xff5347, emissiveIntensity: .25 });
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(.95, .85, 8.5, 10), body);
+  fus.rotation.z = -Math.PI / 2; g.add(fus);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(.93, 2.2, 10), body);
+  nose.rotation.z = -Math.PI / 2; nose.position.x = 5.3; g.add(nose);
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(2.6, .22, 11), body);
+  wing.position.set(.2, -.2, 0); g.add(wing);
+  const tailH = new THREE.Mesh(new THREE.BoxGeometry(1.6, .18, 4.2), body);
+  tailH.position.set(-4.1, .4, 0); g.add(tailH);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 2.3, .22), acc);
+  fin.position.set(-4.2, 1.4, 0); g.add(fin);
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(.32, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff5347 }));
+  beacon.position.set(0, 1.1, 0); beacon.name = "beacon"; g.add(beacon);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(6.5, 7.6, 32),
+    new THREE.MeshBasicMaterial({ color: 0xff5347, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = -.4; ring.name = "selring"; g.add(ring);
+  g.scale.setScalar(1.15);
+  return g;
+}
+
+/* 细腻噪点纹理：让大地有草地质感（颜色由主题着色） */
+function groundTexture() {
+  const cv = document.createElement("canvas"); cv.width = cv.height = 256;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#e8e8e8"; ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 7000; i++) {
+    const v = 195 + Math.floor(Math.random() * 60);
+    ctx.fillStyle = "rgb(" + v + "," + v + "," + v + ")";
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(36, 24);
+  return tex;
+}
+
+/* 太阳神鸟金饰：金沙遗址出土，成都市标 / 天府机场文化图腾
+   —— 中心 12 道旋转齿芒（太阳），外圈 4 只逆时针环飞神鸟 */
+function drawSunBird(ctx, gold) {
+  // 中心太阳：12 道旋转火芒
+  const r1 = 60, r2 = 116;
+  ctx.fillStyle = gold;
+  for (let i = 0; i < 12; i++) {
+    ctx.save();
+    ctx.rotate((i / 12) * Math.PI * 2);
+    ctx.beginPath();
+    ctx.moveTo(-12, -r1);
+    ctx.quadraticCurveTo(10, -(r1 + r2) / 2, 14, -r2);
+    ctx.quadraticCurveTo(0, -(r1 + r2) / 2, 12, -r1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.beginPath(); ctx.arc(0, 0, r1 - 4, 0, Math.PI * 2); ctx.fill();
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath(); ctx.arc(0, 0, r1 - 26, 0, Math.PI * 2); ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+  // 外圈 4 只神鸟
+  const rb = 168;
+  for (let i = 0; i < 4; i++) {
+    ctx.save();
+    ctx.rotate((i / 4) * Math.PI * 2 + 0.35);
+    ctx.translate(0, -rb);
+    ctx.scale(0.82, 0.82);
+    ctx.beginPath();
+    ctx.moveTo(-60, 8);
+    ctx.quadraticCurveTo(-18, -16, 32, -12);
+    ctx.quadraticCurveTo(62, -10, 80, -28);
+    ctx.quadraticCurveTo(88, -36, 96, -30);
+    ctx.lineTo(106, -33);
+    ctx.quadraticCurveTo(92, -22, 80, -16);
+    ctx.quadraticCurveTo(58, 0, 28, 4);
+    ctx.quadraticCurveTo(-12, 10, -42, 18);
+    ctx.lineTo(-60, 28);
+    ctx.quadraticCurveTo(-54, 14, -60, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();      // 上扬的翅膀
+    ctx.moveTo(-6, -8);
+    ctx.quadraticCurveTo(-30, -52, -66, -56);
+    ctx.quadraticCurveTo(-30, -28, -18, -2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+}
+function sunBirdTexture() {
+  const S = 512, cv = document.createElement("canvas"); cv.width = cv.height = S;
+  const ctx = cv.getContext("2d");
+  ctx.translate(S / 2, S / 2);
+  drawSunBird(ctx, "#ecc04e");
+  return new THREE.CanvasTexture(cv);
+}
+
+/* 天府航站楼群：T1/T2 呈「神鸟展翅」V 形对称展开，
+   中央 GTC 圆厅屋顶铺太阳神鸟金饰（与实景一致），塔台立于中轴 */
+function buildTerminal(scene, M, birdTex) {
+  const wing = (sign) => {
+    const g = new THREE.Group();
+    g.position.set(sign * 10, 0, 6);
+    g.rotation.y = -sign * .11;   // 两翼向陆侧后掠，形成 V 形
+    const body = new THREE.Mesh(new THREE.BoxGeometry(150, 7, 16), M.terminal);
+    body.position.set(sign * 75, 3.5, 4); g.add(body);
+    const glow = new THREE.Mesh(new THREE.BoxGeometry(148, 2.4, .6), new THREE.MeshBasicMaterial({ color: 0x3a5a96 }));
+    glow.position.set(sign * 75, 4.2, -4); g.add(glow);
+    // 波浪屋顶：翼根高、翼梢低，叠正弦起伏
+    for (let x = 4; x <= 146; x += 7.9) {
+      const y = 7.2 + 2.2 * Math.cos(((x - 4) / 142) * 1.25) + .4 * Math.sin(x * .12);
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(7.5, 1.1, 24), M.terminal);
+      rib.position.set(sign * x, y, 4); g.add(rib);
+    }
+    scene.add(g);
+  };
+  wing(1); wing(-1);
+  // GTC 圆厅 + 屋顶太阳神鸟
+  const gtc = new THREE.Mesh(new THREE.CylinderGeometry(21, 22, 8, 36), M.terminal);
+  gtc.position.set(0, 4, 26); scene.add(gtc);
+  const gtcGlass = new THREE.Mesh(new THREE.CylinderGeometry(21.3, 21.3, 2, 36), new THREE.MeshBasicMaterial({ color: 0x3a5a96 }));
+  gtcGlass.position.set(0, 3, 26); scene.add(gtcGlass);
+  const emblem = new THREE.Mesh(new THREE.CircleGeometry(18.5, 48),
+    new THREE.MeshBasicMaterial({ map: birdTex, transparent: true }));
+  emblem.rotation.x = -Math.PI / 2; emblem.position.set(0, 8.15, 26); scene.add(emblem);
+}
+
+function buildAirport(scene) {
+  const mk = (color, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .95 }, extra));
+  /* 可换主题的共享材质（applyTheme 统一改色） */
+  const M = {
+    ground: mk(0x0a0f1c, { map: groundTexture() }), runway: mk(0x182032), taxi: mk(0x121a2c),
+    apron: mk(0x0e1526), pad: mk(0x101a30), road: mk(0x131c2f),
+    dash: new THREE.MeshBasicMaterial({ color: 0x6b7892 }),
+    ring: new THREE.MeshBasicMaterial({ color: 0x24314f, side: THREE.DoubleSide }),
+    terminal: mk(0x121b30, { roughness: .6, metalness: .2 }),
+    tower: mk(0x1a2440, { roughness: .5 }),
+    cab: mk(0x223155, { roughness: .95, emissive: 0x16335e, emissiveIntensity: .7 }),
+  };
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2200, 1400), M.ground);
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -.1; scene.add(ground);
+  /* 草坪修剪条纹（机场草地常见的明暗相间带） */
+  const stripeMat = new THREE.MeshBasicMaterial({ color: 0x0a1606, transparent: true, opacity: .08 });
+  for (const [z0, z1] of [[-96, -127], [-158, -290], [150, 30]]) {
+    for (let z = z0; z > z1; z -= 14) {
+      const st = new THREE.Mesh(new THREE.PlaneGeometry(760, 7), stripeMat);
+      st.rotation.x = -Math.PI / 2; st.position.set(0, .008, z); scene.add(st);
+    }
+  }
+
+  const lightPts = (positions, color, size) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({ color, size: size || 2, sizeAttenuation: true });
+    const pts = new THREE.Points(geo, mat);
+    scene.add(pts); return pts;
+  };
+
+  const rwMats = {};
+  for (const k of ["A","B"]) {
+    const rw = RWY[k];
+    const pav = new THREE.Mesh(new THREE.PlaneGeometry(370, 13), M.runway);
+    pav.rotation.x = -Math.PI / 2; pav.position.set(0, .02, rw.z); scene.add(pav);
+    for (let x = -170; x <= 170; x += 18) {
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(9, .7), M.dash);
+      dash.rotation.x = -Math.PI / 2; dash.position.set(x, .05, rw.z); scene.add(dash);
+    }
+    const edge = [];
+    for (let x = -185; x <= 185; x += 12) edge.push(x, .4, rw.z - 7, x, .4, rw.z + 7);
+    rwMats[k] = lightPts(edge, 0xfff2c4, 2.2).material;
+    const appr = [];
+    for (let x = -260; x < -188; x += 9) appr.push(x, .4, rw.z);
+    lightPts(appr, 0xffffff, 2.6);
+  }
+  for (const z of [IN_TAXI_Z, OUT_TAXI_Z]) {
+    const tw = new THREE.Mesh(new THREE.PlaneGeometry(470, 6), M.taxi);
+    tw.rotation.x = -Math.PI / 2; tw.position.set(-5, .02, z); scene.add(tw);
+    const pts = [];
+    for (let x = -235; x <= 225; x += 10) pts.push(x, .35, z);
+    lightPts(pts, 0x2fd6a0, 1.6);
+  }
+  const apron = new THREE.Mesh(new THREE.PlaneGeometry(330, 50), M.apron);
+  apron.rotation.x = -Math.PI / 2; apron.position.set(0, .015, -28); scene.add(apron);
+  /* 航站楼前服务道路（接驳车行驶） */
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(360, 3.6), M.road);
+  road.rotation.x = -Math.PI / 2; road.position.set(0, .02, -1.2); scene.add(road);
+  /* 航站楼前人行步道 */
+  const walk = new THREE.Mesh(new THREE.PlaneGeometry(360, 2.2), M.pad);
+  walk.rotation.x = -Math.PI / 2; walk.position.set(0, .02, 1.5); scene.add(walk);
+  for (let i = 0; i < GATE_COUNT; i++) {
+    const pad = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), M.pad);
+    pad.rotation.x = -Math.PI / 2; pad.position.set(gateX(i), .03, GATE_Z); scene.add(pad);
+    const m = new THREE.Mesh(new THREE.RingGeometry(4.6, 5.2, 24), M.ring);
+    m.rotation.x = -Math.PI / 2; m.position.set(gateX(i), .04, GATE_Z); scene.add(m);
+  }
+  const birdTex = sunBirdTexture();
+  buildTerminal(scene, M, birdTex);
+  /* 横风跑道 11L/29R（东侧，远景装饰） */
+  const cw = new THREE.Mesh(new THREE.PlaneGeometry(13, 240), M.runway);
+  cw.rotation.x = -Math.PI / 2; cw.position.set(320, .02, -60); scene.add(cw);
+  for (let z = -170; z <= 50; z += 18) {
+    const dash = new THREE.Mesh(new THREE.PlaneGeometry(.7, 9), M.dash);
+    dash.rotation.x = -Math.PI / 2; dash.position.set(320, .05, z); scene.add(dash);
+  }
+  /* 塔台立于中轴 GTC 之后（天府塔台居于航站区中央） */
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(2, 3.2, 32, 12), M.tower);
+  tower.position.set(0, 16, 58); scene.add(tower);
+  const cab = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 3.6, 5, 12), M.cab);
+  cab.position.set(0, 34.5, 58); scene.add(cab);
+  const towerLight = new THREE.Mesh(new THREE.SphereGeometry(.8, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff5347 }));
+  towerLight.position.set(0, 38.5, 58); scene.add(towerLight);
+  const starPos = [];
+  for (let i = 0; i < 900; i++) {
+    const r = 950, th = Math.random() * Math.PI * 2, ph = Math.random() * Math.PI * .48;
+    starPos.push(r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph) + 10, r * Math.sin(ph) * Math.sin(th));
+  }
+  const stars = lightPts(starPos, 0x7d8db3, 1.5);
+  return { rwMats, towerLight, M, stars };
+}
+
+/* ------- 天空：渐变穹顶 / 太阳月亮光晕 / 柔和云层 ------- */
+function softGlowTexture() {
+  const cv = document.createElement("canvas"); cv.width = cv.height = 128;
+  const ctx = cv.getContext("2d");
+  const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+  g.addColorStop(0, "rgba(255,255,255,.95)");
+  g.addColorStop(.5, "rgba(255,255,255,.5)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(cv);
+}
+function buildSky(scene) {
+  /* 天顶→地平线双色渐变穹顶 */
+  const skyU = {
+    topColor: { value: new THREE.Color(0x3d8fd6) },
+    bottomColor: { value: new THREE.Color(0xcfe9fb) },
+    offset: { value: 20 }, exponent: { value: .65 },
+  };
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(1500, 24, 12),
+    new THREE.ShaderMaterial({
+      uniforms: skyU, side: THREE.BackSide, depthWrite: false, fog: false,
+      vertexShader: "varying vec3 vWorldPosition; void main(){ vec4 wp=modelMatrix*vec4(position,1.); vWorldPosition=wp.xyz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }",
+      fragmentShader: "uniform vec3 topColor; uniform vec3 bottomColor; uniform float offset; uniform float exponent; varying vec3 vWorldPosition; void main(){ float h=normalize(vWorldPosition+vec3(0.,offset,0.)).y; gl_FragColor=vec4(mix(bottomColor,topColor,pow(max(h,0.),exponent)),1.); }",
+    })
+  );
+  dome.renderOrder = -1; scene.add(dome);
+
+  const puff = softGlowTexture();
+  const cloudMat = new THREE.SpriteMaterial({ map: puff, transparent: true, depthWrite: false, opacity: .85 });
+  const clouds = new THREE.Group();
+  for (let i = 0; i < 10; i++) {
+    const c = new THREE.Group();
+    const n = 5 + Math.floor(Math.random() * 4);
+    for (let j = 0; j < n; j++) {
+      const s = new THREE.Sprite(cloudMat);
+      const sc = 22 + Math.random() * 26;
+      s.scale.set(sc * (1.3 + Math.random() * .6), sc, 1);
+      s.position.set((j - n / 2) * 14 + (Math.random() - .5) * 8, (Math.random() - .4) * 7, (Math.random() - .5) * 14);
+      c.add(s);
+    }
+    c.position.set(-560 + Math.random() * 1120, 140 + Math.random() * 90, -500 + Math.random() * 620);
+    c.userData.vx = 1 + Math.random() * 1.8;
+    clouds.add(c);
+  }
+  scene.add(clouds);
+
+  const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: puff, color: 0xffe2a0, transparent: true, depthWrite: false, opacity: .9 }));
+  sunGlow.scale.set(190, 190, 1); sunGlow.position.set(340, 290, -560); scene.add(sunGlow);
+  const sunBall = new THREE.Mesh(new THREE.SphereGeometry(17, 16, 16), new THREE.MeshBasicMaterial({ color: 0xfff6d8, fog: false }));
+  sunBall.position.copy(sunGlow.position); scene.add(sunBall);
+
+  const moonGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: puff, color: 0xbcd0f0, transparent: true, depthWrite: false, opacity: .35 }));
+  moonGlow.scale.set(80, 80, 1); moonGlow.position.set(-320, 270, -540); scene.add(moonGlow);
+  const moon = new THREE.Mesh(new THREE.SphereGeometry(13, 16, 16), new THREE.MeshBasicMaterial({ color: 0xe6edf9, fog: false }));
+  moon.position.copy(moonGlow.position); scene.add(moon);
+
+  return { skyU, clouds, cloudMat, sunBall, sunGlow, moon, moonGlow };
+}
+
+/* ------- 远景树丛（土地点缀） ------- */
+function buildTrees(scene, M) {
+  const trunkMat = M.trunk = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: .9 });
+  const leafMat = M.leaf = new THREE.MeshStandardMaterial({ color: 0x2f6b33, roughness: .9 });
+  const trunkGeo = new THREE.CylinderGeometry(.5, .7, 4, 6);
+  const leafGeo = new THREE.ConeGeometry(4, 9, 7);
+  const clusters = [[-380,-220],[-300,-260],[330,-230],[420,-180],[-420,120],[380,90],[260,120],[-260,140],[60,150],[-80,170]];
+  for (const [cx, cz] of clusters) {
+    const n = 4 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < n; i++) {
+      const t = new THREE.Group();
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat); trunk.position.y = 2; t.add(trunk);
+      const leaf = new THREE.Mesh(leafGeo, leafMat); leaf.position.y = 8; t.add(leaf);
+      t.scale.setScalar(.7 + Math.random() * .8);
+      t.position.set(cx + (Math.random() - .5) * 60, 0, cz + (Math.random() - .5) * 40);
+      scene.add(t);
+    }
+  }
+}
+
+/* ------- 接驳车：沿航站楼前道路双向往返 ------- */
+function buildBuses(scene) {
+  const buses = [];
+  const colors = [0x35b56a, 0x3f8fe0, 0xf2a93b, 0xe05a4e];
+  const winMat = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, roughness: .25, metalness: .4 });
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222831, roughness: .9 });
+  const wheelGeo = new THREE.CylinderGeometry(.45, .45, .4, 8);
+  for (let i = 0; i < 4; i++) {
+    const b = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(7, 2.1, 2.4),
+      new THREE.MeshStandardMaterial({ color: colors[i], roughness: .5 }));
+    body.position.y = 1.35; b.add(body);
+    const win = new THREE.Mesh(new THREE.BoxGeometry(6.2, .8, 2.45), winMat);
+    win.position.y = 1.9; b.add(win);
+    for (const [wx, wz] of [[-2.4,1.1],[2.4,1.1],[-2.4,-1.1],[2.4,-1.1]]) {
+      const w = new THREE.Mesh(wheelGeo, wheelMat);
+      w.rotation.x = Math.PI / 2; w.position.set(wx, .45, wz); b.add(w);
+    }
+    const dir = i % 2 ? -1 : 1;
+    b.userData = { x: -160 + i * 85, dir, speed: 9 + Math.random() * 5, z: dir > 0 ? -2 : -.4 };
+    scene.add(b); buses.push(b);
+  }
+  return buses;
+}
+
+/* ------- 行人：航站楼前步道上来回走动 ------- */
+function buildPeople(scene) {
+  const people = [];
+  const headMat = new THREE.MeshStandardMaterial({ color: 0xe8c39e, roughness: .8 });
+  const colors = [0xe05a4e, 0x4e8fe0, 0x4ec07c, 0xe0b94e, 0x9a6fe0, 0xd8dfeb];
+  const bodyGeo = new THREE.CylinderGeometry(.26, .34, 1.05, 6);
+  const headGeo = new THREE.SphereGeometry(.23, 6, 6);
+  for (let i = 0; i < 36; i++) {
+    const p = new THREE.Group();
+    const body = new THREE.Mesh(bodyGeo,
+      new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: .85 }));
+    body.position.y = .55; p.add(body);
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.y = 1.3; p.add(head);
+    p.userData = {
+      ax: -155 + Math.random() * 310, az: .7 + Math.random() * 1.4,
+      amp: 4 + Math.random() * 9, speed: .25 + Math.random() * .4, phase: Math.random() * Math.PI * 2,
+    };
+    scene.add(p); people.push(p);
+  }
+  return people;
+}
+
+/* ============================================================
+   应用入口
+   ============================================================ */
+const sims = { fcfs: createSim("fcfs"), smart: createSim("smart") };
+let view = "smart", speed = 10, paused = false, selectedId = null;
+
+const mount = document.getElementById("scene");
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070b14);
+scene.fog = new THREE.FogExp2(0x070b14, .00095);
+const camera = new THREE.PerspectiveCamera(52, 1, 1, 3000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+mount.appendChild(renderer.domElement);
+
+const ambient = new THREE.AmbientLight(0x8aa0cc, .55);
+scene.add(ambient);
+const sun = new THREE.DirectionalLight(0xbfd2ff, .85);
+sun.position.set(-200, 300, 180); scene.add(sun);
+const warm = new THREE.PointLight(0xff5347, .6, 400);
+warm.position.set(0, 60, 30); scene.add(warm);
+
+const { rwMats, towerLight, M, stars } = buildAirport(scene);
+const sky = buildSky(scene);
+buildTrees(scene, M);
+const buses = buildBuses(scene);
+const people = buildPeople(scene);
+const planesGroup = new THREE.Group(); scene.add(planesGroup);
+let meshById = new Map();
+let renderedView = view;
+
+const cam = { theta: .12, phi: .78, r: 380, target: V(-10, 0, -55) };
+function applyCam() {
+  camera.position.set(
+    cam.target.x + cam.r * Math.sin(cam.phi) * Math.sin(cam.theta),
+    cam.target.y + cam.r * Math.cos(cam.phi),
+    cam.target.z + cam.r * Math.sin(cam.phi) * Math.cos(cam.theta)
+  );
+  camera.lookAt(cam.target);
+}
+applyCam();
+
+let dragging = false, movedDist = 0, px = 0, py = 0;
+renderer.domElement.addEventListener("mousedown", (e) => { dragging = true; movedDist = 0; px = e.clientX; py = e.clientY; });
+window.addEventListener("mousemove", (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - px, dy = e.clientY - py;
+  movedDist += Math.abs(dx) + Math.abs(dy);
+  px = e.clientX; py = e.clientY;
+  cam.theta -= dx * .005;
+  cam.phi = Math.max(.18, Math.min(1.42, cam.phi - dy * .004));
+  applyCam();
+});
+window.addEventListener("mouseup", () => { dragging = false; });
+renderer.domElement.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  cam.r = Math.max(90, Math.min(950, cam.r * (1 + e.deltaY * .001)));
+  applyCam();
+}, { passive: false });
+
+const ray = new THREE.Raycaster();
+renderer.domElement.addEventListener("click", (e) => {
+  if (movedDist > 6) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const m = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  ray.setFromCamera(m, camera);
+  const hits = ray.intersectObjects(planesGroup.children, true);
+  let id = null;
+  if (hits.length) {
+    let o = hits[0].object;
+    while (o && o.userData.flightId === undefined) o = o.parent;
+    if (o) id = o.userData.flightId;
+  }
+  selectedId = id;
+});
+
+function resize() {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+}
+resize();
+window.addEventListener("resize", resize);
+
+/* ------- UI 控件 ------- */
+const $ = (id) => document.getElementById(id);
+const btnFcfs = $("btnFcfs"), btnSmart = $("btnSmart"), btnPause = $("btnPause"), btnStorm = $("btnStorm"), btnTheme = $("btnTheme");
+
+/* ------- 白天 / 夜间主题 ------- */
+const THEMES = {
+  day: {
+    skyTop: 0x3d8fd6, skyHorizon: 0xcfe9fb, fogColor: 0xc4e0f4, fog: .0005,
+    ambient: [0xdfeaff, .5], sun: [0xfff2d4, .85], warm: .12,
+    cloud: 0xffffff, cloudOpacity: .85, cabEmissive: .12,
+    mats: {
+      ground: 0x5a9050, runway: 0x596270, taxi: 0x6b7382, apron: 0x7d8492,
+      pad: 0x8a909e, road: 0x565e6c, dash: 0xf5f8fc, ring: 0xc9d2de,
+      terminal: 0xc6cedb, tower: 0xb8c1d0, cab: 0x9fc0e6,
+      leaf: 0x2f6b33, trunk: 0x6b4a2e,
+    },
+  },
+  night: {
+    skyTop: 0x04070e, skyHorizon: 0x0e1830, fogColor: 0x070b14, fog: .00095,
+    ambient: [0x8aa0cc, .55], sun: [0xbfd2ff, .85], warm: .6,
+    cloud: 0x18233f, cloudOpacity: .4, cabEmissive: .7,
+    mats: {
+      ground: 0x0b101e, runway: 0x182032, taxi: 0x121a2c, apron: 0x0e1526,
+      pad: 0x101a30, road: 0x131c2f, dash: 0x6b7892, ring: 0x24314f,
+      terminal: 0x121b30, tower: 0x1a2440, cab: 0x223155,
+      leaf: 0x14241a, trunk: 0x1d1712,
+    },
+  },
+};
+let theme = "day";
+function applyTheme(mode) {
+  theme = mode;
+  const T = THEMES[mode];
+  scene.background.setHex(T.fogColor);
+  scene.fog.color.setHex(T.fogColor); scene.fog.density = T.fog;
+  sky.skyU.topColor.value.setHex(T.skyTop);
+  sky.skyU.bottomColor.value.setHex(T.skyHorizon);
+  ambient.color.setHex(T.ambient[0]); ambient.intensity = T.ambient[1];
+  sun.color.setHex(T.sun[0]); sun.intensity = T.sun[1];
+  warm.intensity = T.warm;
+  for (const k in T.mats) M[k].color.setHex(T.mats[k]);
+  M.cab.emissiveIntensity = T.cabEmissive;
+  sky.cloudMat.color.setHex(T.cloud); sky.cloudMat.opacity = T.cloudOpacity;
+  stars.visible = mode === "night";
+  sky.sunBall.visible = sky.sunGlow.visible = mode === "day";
+  sky.moon.visible = sky.moonGlow.visible = mode === "night";
+  document.body.classList.toggle("day", mode === "day");
+  btnTheme.textContent = mode === "day" ? "🌙 夜间" : "☀️ 白天";
+}
+btnTheme.onclick = () => applyTheme(theme === "day" ? "night" : "day");
+applyTheme("day");
+function setView(v) {
+  view = v; selectedId = null;
+  btnFcfs.className = v === "fcfs" ? "on-blue" : "";
+  btnSmart.className = v === "smart" ? "on" : "";
+}
+btnFcfs.onclick = () => setView("fcfs");
+btnSmart.onclick = () => setView("smart");
+document.querySelectorAll("[data-speed]").forEach((b) => {
+  b.onclick = () => {
+    speed = +b.dataset.speed; paused = false; btnPause.textContent = "⏸";
+    document.querySelectorAll("[data-speed]").forEach((x) => x.classList.toggle("on", x === b));
+  };
+});
+btnPause.onclick = () => { paused = !paused; btnPause.textContent = paused ? "▶" : "⏸"; };
+btnStorm.onclick = () => {
+  for (const k of ["fcfs","smart"]) {
+    sims[k].runways.B.closedUntil = sims[k].t + 300;
+    log(sims[k], "⛈ 雷暴：跑道 02R 关闭 5 分钟");
+  }
+};
+$("flightList").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-fid]");
+  if (row) selectedId = +row.dataset.fid;
+});
+
+/* ------- UI 刷新（4Hz） ------- */
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+function refreshUI() {
+  const sim = sims[view];
+  const tt = sim.clockBase + sim.t;
+  $("clock").textContent =
+    String(Math.floor(tt / 3600) % 24).padStart(2, "0") + ":" +
+    String(Math.floor((tt % 3600) / 60)).padStart(2, "0") + ":" +
+    String(Math.floor(tt % 60)).padStart(2, "0");
+
+  const kFcfs = snapshotKpi(sims.fcfs), kSmart = snapshotKpi(sims.smart);
+  const k = view === "fcfs" ? kFcfs : kSmart;
+
+  const active = sim.flights.filter((f) => f.phase !== "departed");
+  $("flightHeader").innerHTML = (view === "fcfs" ? "FCFS" : "智能") + " 视图 · 活动 " + k.active +
+    (k.holding ? "（<em>" + k.holding + " 盘旋</em>）" : "");
+  $("flightList").innerHTML = active.slice(-60).reverse().map((f) =>
+    '<div class="frow' + (selectedId === f.id ? " sel" : "") + '" data-fid="' + f.id + '">' +
+    '<div class="dot" style="background:' + PHASE_COLOR[f.phase] + '"></div>' +
+    '<div class="fcs">' + esc(f.callsign) + '</div>' +
+    '<div class="forig">' + esc(f.origin) + '</div>' +
+    '<div class="fph" style="color:' + PHASE_COLOR[f.phase] + '">' + PHASE_LABEL[f.phase] + '</div></div>'
+  ).join("") || '<div style="color:var(--dim);font-size:11px;padding:12px">等待首班进港…</div>';
+
+  const rows = [
+    ["准点率", "onTime", "%", true], ["平均延误", "avgDelay", "s", false],
+    ["平均滑入", "avgTaxi", "s", false], ["已离场", "departed", "", true],
+    ["盘旋等待", "holding", "", false],
+  ];
+  $("cmpRows").innerHTML = rows.map((r) => {
+    const a = kFcfs[r[1]], b = kSmart[r[1]];
+    const bWin = r[3] ? b > a : b < a, aWin = r[3] ? a > b : a < b;
+    return '<div class="cmp-grid"><span class="k">' + r[0] + '</span>' +
+      '<span class="v' + (aWin ? " win" : "") + '">' + a + r[2] + '</span>' +
+      '<span class="v' + (bWin ? " win" : "") + '">' + b + r[2] + '</span></div>';
+  }).join("");
+
+  $("utilTitle").textContent = "跑道占用率（" + (view === "fcfs" ? "FCFS" : "智能") + "）";
+  $("rwRows").innerHTML = ["A","B"].map((kk) => {
+    const rw = sim.runways[kk];
+    const closed = sim.t < rw.closedUntil, busy = !!rw.occupiedBy;
+    const util = kk === "A" ? k.utilA : k.utilB;
+    return '<div class="rw-row"><span>跑道 ' + RWY[kk].name +
+      (closed ? ' <span style="color:var(--accent)">关闭' + (kk === "B" ? " " + Math.max(0, Math.round(rw.closedUntil - sim.t)) + "s" : "") + '</span>' :
+        busy ? ' <span style="color:var(--amber)">占用</span>' : "") +
+      '</span><span style="color:var(--dim)">' + util + '%</span></div>' +
+      '<div class="bar"><div style="width:' + util + '%;background:' + (closed ? "var(--accent)" : "var(--blue)") + '"></div></div>';
+  }).join("");
+
+  const stormClosed = sims.smart.t < sims.smart.runways.B.closedUntil;
+  btnStorm.disabled = stormClosed;
+  btnStorm.className = stormClosed ? "closed" : "warn";
+  btnStorm.textContent = stormClosed
+    ? "02R 关闭 " + Math.max(0, Math.round(sims.smart.runways.B.closedUntil - sims.smart.t)) + "s"
+    : "⛈ 雷暴关闭 02R";
+
+  const det = $("detail");
+  const sf = active.find((f) => f.id === selectedId);
+  if (sf) {
+    det.style.display = "block";
+    det.querySelector(".callsign").textContent = sf.callsign;
+    det.querySelector(".sub").textContent = sf.airline + " · " + sf.origin + " 来港";
+    det.querySelector(".kv").innerHTML = [
+      ["状态", PHASE_LABEL[sf.phase]], ["机位", sf.gate ? sf.gate.i + 1 : "—"],
+      ["跑道", sf.rwy ? sf.rwy.name : (RWY[sf.outRwyKey] ? RWY[sf.outRwyKey].name : "—")],
+      ["进近延误", Math.round(Math.max(0, sf.delay)) + "s"],
+    ].map((p) => '<div class="rw-row"><span style="color:var(--dim)">' + p[0] + '</span><span>' + esc(p[1]) + '</span></div>').join("");
+  } else det.style.display = "none";
+
+  $("logTitle").textContent = "塔台事件（" + (view === "fcfs" ? "FCFS" : "智能") + "）· 拖拽旋转 / 滚轮缩放 / 点击飞机查看";
+  $("logBody").innerHTML = sim.events.slice(0, 5).map((e) =>
+    '<div class="ev"><b>T+' + Math.round(e.t) + 's</b>' + esc(e.msg) + '</div>').join("");
+}
+
+/* ------- 主循环 ------- */
+let last = performance.now(), uiTimer = 0;
+const tmpV = V(0, 0, 0);
+const label = $("label");
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  const realDt = Math.min((now - last) / 1000, .1);
+  last = now;
+  if (!paused) {
+    const simDt = realDt * speed;
+    const steps = Math.ceil(simDt / .5);
+    for (let i = 0; i < steps; i++) {
+      stepSim(sims.fcfs, simDt / steps);
+      stepSim(sims.smart, simDt / steps);
+    }
+  }
+
+  if (renderedView !== view) {
+    renderedView = view;
+    for (const m of planesGroup.children.slice()) planesGroup.remove(m);
+    meshById = new Map();
+  }
+  const sim = sims[renderedView];
+
+  for (const f of sim.flights) {
+    if (f.phase === "departed") {
+      const m = meshById.get(f.id);
+      if (m) { planesGroup.remove(m); meshById.delete(f.id); }
+      continue;
+    }
+    let m = meshById.get(f.id);
+    if (!m) {
+      m = buildPlaneMesh();
+      m.userData.flightId = f.id;
+      planesGroup.add(m); meshById.set(f.id, m);
+    }
+    m.position.copy(f.pos);
+    const d = f.backward ? tmpV.copy(f.dir).negate() : f.dir;
+    const targetYaw = Math.atan2(-d.z, d.x);
+    let dy = targetYaw - m.rotation.y;
+    while (dy > Math.PI) dy -= Math.PI * 2;
+    while (dy < -Math.PI) dy += Math.PI * 2;
+    m.rotation.y += dy * Math.min(1, realDt * 6);
+    m.rotation.z = Math.atan2(d.y, Math.hypot(d.x, d.z)) * .8;
+    const beacon = m.getObjectByName("beacon");
+    if (beacon) beacon.material.color.setHex(Math.sin(now * .008 + f.id) > .6 ? 0xff5347 : 0x44211f);
+    const ring = m.getObjectByName("selring");
+    if (ring) ring.material.opacity = selectedId === f.id ? .5 + .3 * Math.sin(now * .005) : 0;
+  }
+
+  for (const k of ["A","B"]) {
+    const closed = sim.t < sim.runways[k].closedUntil;
+    rwMats[k].color.setHex(closed ? 0xff3b30 : 0xfff2c4);
+  }
+  towerLight.material.color.setHex(Math.sin(now * .004) > 0 ? 0xff5347 : 0x551c19);
+
+  for (const b of buses) {
+    const u = b.userData;
+    u.x += u.dir * u.speed * realDt;
+    if (u.x > 178) u.x = -178;
+    if (u.x < -178) u.x = 178;
+    b.position.set(u.x, 0, u.z);
+    b.rotation.y = u.dir > 0 ? 0 : Math.PI;
+  }
+  for (const p of people) {
+    const u = p.userData;
+    const ph = now * .001 * u.speed + u.phase;
+    p.position.set(u.ax + Math.sin(ph) * u.amp, Math.abs(Math.sin(ph * 7)) * .07, u.az);
+    p.rotation.y = Math.cos(ph) >= 0 ? 0 : Math.PI;
+  }
+  for (const c of sky.clouds.children) {
+    c.position.x += c.userData.vx * realDt;
+    if (c.position.x > 560) c.position.x = -560;
+  }
+
+  const sf = sim.flights.find((x) => x.id === selectedId && x.phase !== "departed");
+  if (sf) {
+    tmpV.copy(sf.pos); tmpV.y += 8; tmpV.project(camera);
+    if (tmpV.z < 1) {
+      label.style.display = "block";
+      label.style.left = (tmpV.x * .5 + .5) * window.innerWidth + "px";
+      label.style.top = (-tmpV.y * .5 + .5) * window.innerHeight + "px";
+      label.textContent = sf.callsign;
+    } else label.style.display = "none";
+  } else label.style.display = "none";
+
+  renderer.render(scene, camera);
+
+  uiTimer += realDt;
+  if (uiTimer > .25) { uiTimer = 0; refreshUI(); }
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
