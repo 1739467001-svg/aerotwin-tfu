@@ -479,6 +479,36 @@ function buildStorm(scene) {
   return { rain, drops, TOP };
 }
 
+/* ------- 世界空间凝结尾迹：环形池化的消散气团（脱离飞机、留在空中渐隐扩散）------- */
+function buildContrails(scene) {
+  const tex = softGlowTexture(), N = 140, pool = [];
+  for (let i = 0; i < N; i++) {
+    const mat = new THREE.SpriteMaterial({ map: tex, color: 0xeef4ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    const sp = new THREE.Sprite(mat); sp.visible = false; scene.add(sp);
+    pool.push({ sp, mat, life: 0, max: 1, base: 1 });
+  }
+  let idx = 0;
+  return {
+    spawn(x, y, z) {                 // 环形覆盖：超过 N 个则自然顶替最旧
+      const p = pool[idx]; idx = (idx + 1) % N;
+      p.sp.position.set(x, y, z); p.sp.visible = true;
+      p.life = p.max = 2.6; p.base = 2.6 + Math.random() * 1.4;
+      p.sp.scale.setScalar(p.base);
+    },
+    update(dt) {
+      for (const p of pool) {
+        if (p.life <= 0) continue;
+        p.life -= dt;
+        if (p.life <= 0) { p.sp.visible = false; p.mat.opacity = 0; continue; }
+        const t = p.life / p.max;                    // 1→0
+        p.mat.opacity = 0.45 * t;                    // 渐隐
+        p.sp.scale.setScalar(p.base * (1 + (1 - t) * 2.0));  // 渐扩散
+        p.sp.position.y += dt * 1.4;                 // 随热气缓缓上飘
+      }
+    },
+  };
+}
+
 /* ------- 远景树丛（土地点缀） ------- */
 function buildTrees(scene, M) {
   const trunkMat = M.trunk = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: .9 });
@@ -596,6 +626,7 @@ scene.traverse((o) => {
   }
 });
 const storm = Object.assign(buildStorm(scene), { intensity: 0, flash: 0, flashTimer: 0, wet: false });
+const contrails = buildContrails(scene);
 const planesGroup = new THREE.Group(); scene.add(planesGroup);
 let meshById = new Map();
 let renderedView = view;
@@ -1014,6 +1045,7 @@ function loop(now) {
   applyDaylight(timeHour(((((sim.clockBase + sim.t) / 3600) % 24) + 24) % 24));
   applyStorm(realDt);
   updateCamera(realDt);
+  contrails.update(realDt);
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
@@ -1043,9 +1075,19 @@ function loop(now) {
       const ts = (tt + f.id * 0.37) % 1.25;                              // 白色频闪 ~1.25s 双闪（按 id 错相）
       fxp.stL.visible = fxp.stR.visible = ts < 0.05 || (ts > 0.12 && ts < 0.17);
       fxp.land.visible = ph === "approach" || ph === "landing" || ph === "takeoff" || ph === "taxiIn" || ph === "taxiOut";  // 起降灯
-      fxp.trail.visible = ph === "takeoff" && f.pos.y > 2;               // 起飞尾流（爬升中）
+      fxp.trail.visible = ph === "takeoff" && f.pos.y > 2;               // 机尾喷流（贴机，爬升中）
       fxp.ring.material.opacity = selectedId === f.id ? 0.5 + 0.3 * Math.sin(now * 0.005) : 0;
     }
+    // 世界空间凝结尾迹：起飞爬升时沿航迹等距播撒消散气团（脱离飞机留在空中）
+    if (f.phase === "takeoff" && f.pos.y > 6) {
+      const last = m.userData.trailLast || (m.userData.trailLast = { x: f.pos.x, y: f.pos.y, z: f.pos.z });
+      let dx = f.pos.x - last.x, dy = f.pos.y - last.y, dz = f.pos.z - last.z, dist = Math.hypot(dx, dy, dz), guard = 12;
+      while (dist >= 3.5 && guard-- > 0) {
+        const s = 3.5 / dist; last.x += dx * s; last.y += dy * s; last.z += dz * s;
+        contrails.spawn(last.x, last.y - 0.3, last.z);
+        dx = f.pos.x - last.x; dy = f.pos.y - last.y; dz = f.pos.z - last.z; dist = Math.hypot(dx, dy, dz);
+      }
+    } else if (m.userData.trailLast) m.userData.trailLast = null;
   }
 
   for (const k of ["A","B"]) {
