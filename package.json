@@ -1,0 +1,9 @@
+{
+  "name": "aerotwin-tfu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "成都天府国际机场 TFU · 调度算法 A/B 影子仿真（仿真内核单元测试）",
+  "scripts": {
+    "test": "node --test"
+  }
+}
