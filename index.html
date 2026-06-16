@@ -266,7 +266,7 @@ function buildTerminal(scene, M, birdTex) {
 
 function buildAirport(scene) {
   const mk = (color, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .95 }, extra));
-  /* 可换主题的共享材质（applyTheme 统一改色） */
+  /* 昼夜共享材质（applyDaylight 按时刻统一插值改色） */
   const M = {
     ground: mk(0x0a0f1c, { map: groundTexture() }), runway: mk(0x182032), taxi: mk(0x121a2c),
     apron: mk(0x0e1526), pad: mk(0x101a30), road: mk(0x131c2f),
@@ -509,11 +509,12 @@ scene.add(ambient);
 const sun = new THREE.DirectionalLight(0xbfd2ff, .85);
 sun.position.set(-200, 300, 180); scene.add(sun);
 sun.castShadow = true;
+scene.add(sun.target);   // 目标锚定原点，太阳绕场时阴影朝向随之正确更新
 sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 1.0;
-{ const sc = sun.shadow.camera;   // 正交视锥覆盖整个机场地块
-  sc.left = -450; sc.right = 450; sc.top = 340; sc.bottom = -340; sc.near = 80; sc.far = 900;
+{ const sc = sun.shadow.camera;   // 正交视锥覆盖整个机场地块（太阳绕行半径 ~600，留足近远裕量）
+  sc.left = -500; sc.right = 500; sc.top = 380; sc.bottom = -380; sc.near = 50; sc.far = 1300;
   sc.updateProjectionMatrix(); }
 const warm = new THREE.PointLight(0xff5347, .6, 400);
 warm.position.set(0, 60, 30); scene.add(warm);
@@ -627,28 +628,95 @@ const THEMES = {
     },
   },
 };
-let theme = "day";
-function applyTheme(mode) {
-  theme = mode;
-  const T = THEMES[mode];
-  scene.background.setHex(T.fogColor);
-  scene.fog.color.setHex(T.fogColor); scene.fog.density = T.fog;
-  sky.skyU.topColor.value.setHex(T.skyTop);
-  sky.skyU.bottomColor.value.setHex(T.skyHorizon);
-  ambient.color.setHex(T.ambient[0]); ambient.intensity = T.ambient[1];
-  sun.color.setHex(T.sun[0]); sun.intensity = T.sun[1];
-  warm.intensity = T.warm;
-  for (const k in T.mats) M[k].color.setHex(T.mats[k]);
-  M.cab.emissiveIntensity = T.cabEmissive;
-  sky.cloudMat.color.setHex(T.cloud); sky.cloudMat.opacity = T.cloudOpacity;
-  stars.visible = mode === "night";
-  sky.sunBall.visible = sky.sunGlow.visible = mode === "day";
-  sky.moon.visible = sky.moonGlow.visible = mode === "night";
-  document.body.classList.toggle("day", mode === "day");
-  btnTheme.textContent = mode === "day" ? "🌙 夜间" : "☀️ 白天";
+/* ------- 昼夜循环：太阳随时钟划过天空（大气散射式渐变）-------
+   按"当日时刻"连续插值 天空/雾/光照/材质，并把平行光与可见太阳放到真实日位上，
+   使阴影方向随太阳走；月亮与星空按太阳落山程度渐入。沿用上方 day/night 调色板做材质端点。 */
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / ((e1 - e0) || 1e-6), 0, 1); return t * t * (3 - 2 * t); };
+
+const SUN_R = 600, SUN_VIS_R = 700, MOON_VIS_R = 700;   // 平行光 / 可见日 / 可见月 距离
+/* 天空关键帧（按当日小时；首尾同色实现 0↔24 衔接）。day=材质日夜插值量（0 夜 ~ 1 昼） */
+const SKYKF = [
+  { h:0.0,  top:0x04070e, hor:0x0e1830, fog:0x070b14, fogD:0.00095, ambC:0x8aa0cc, ambI:0.52, sunC:0x9fb6e8, sunI:0.45, warmI:0.60, cloudC:0x18233f, cloudOp:0.42, cabE:0.70, day:0.00 },
+  { h:5.2,  top:0x06101f, hor:0x163255, fog:0x0b1a2c, fogD:0.00092, ambC:0x8499c4, ambI:0.50, sunC:0x90a8d8, sunI:0.42, warmI:0.55, cloudC:0x223047, cloudOp:0.45, cabE:0.62, day:0.08 },
+  { h:6.6,  top:0x355084, hor:0xff9e63, fog:0xddae84, fogD:0.00085, ambC:0xc7a98f, ambI:0.50, sunC:0xffb066, sunI:0.70, warmI:0.34, cloudC:0xffd6ab, cloudOp:0.60, cabE:0.34, day:0.50 },
+  { h:9.0,  top:0x2f74c4, hor:0xcfe3f3, fog:0xc9e1f2, fogD:0.00055, ambC:0xd8e6ff, ambI:0.54, sunC:0xfff0cf, sunI:1.00, warmI:0.16, cloudC:0xffffff, cloudOp:0.82, cabE:0.16, day:0.92 },
+  { h:12.5, top:0x2f6fc0, hor:0xbcd8f0, fog:0xc4e0f4, fogD:0.00050, ambC:0xdfeaff, ambI:0.55, sunC:0xfff4da, sunI:1.08, warmI:0.12, cloudC:0xffffff, cloudOp:0.85, cabE:0.12, day:1.00 },
+  { h:16.5, top:0x3074c0, hor:0xc7dcef, fog:0xc6dff0, fogD:0.00055, ambC:0xdce8ff, ambI:0.54, sunC:0xffeccb, sunI:1.00, warmI:0.16, cloudC:0xfff4ec, cloudOp:0.82, cabE:0.16, day:0.92 },
+  { h:18.2, top:0x2b3f6b, hor:0xff7a3e, fog:0xdc8f5e, fogD:0.00085, ambC:0xc99a82, ambI:0.50, sunC:0xff8038, sunI:0.70, warmI:0.40, cloudC:0xffb585, cloudOp:0.62, cabE:0.40, day:0.50 },
+  { h:19.6, top:0x0a1430, hor:0x21385f, fog:0x0c1730, fogD:0.00092, ambC:0x7e93bf, ambI:0.50, sunC:0x7d93c8, sunI:0.50, warmI:0.55, cloudC:0x223047, cloudOp:0.46, cabE:0.60, day:0.12 },
+  { h:21.0, top:0x05080f, hor:0x0f1a32, fog:0x080d17, fogD:0.00095, ambC:0x8aa0cc, ambI:0.52, sunC:0x9fb6e8, sunI:0.45, warmI:0.60, cloudC:0x18233f, cloudOp:0.42, cabE:0.70, day:0.00 },
+];
+SKYKF.push(Object.assign({}, SKYKF[0], { h: 24.0 }));   // 0↔24 衔接帧
+for (const kf of SKYKF) {
+  kf.topC = new THREE.Color(kf.top); kf.horC = new THREE.Color(kf.hor); kf.fogC = new THREE.Color(kf.fog);
+  kf.ambCC = new THREE.Color(kf.ambC); kf.sunCC = new THREE.Color(kf.sunC); kf.cloudCC = new THREE.Color(kf.cloudC);
 }
-btnTheme.onclick = () => applyTheme(theme === "day" ? "night" : "day");
-applyTheme("day");
+const matKeys = Object.keys(THEMES.day.mats);
+const dayCol = {}, nightCol = {};
+for (const k of matKeys) { dayCol[k] = new THREE.Color(THEMES.day.mats[k]); nightCol[k] = new THREE.Color(THEMES.night.mats[k]); }
+
+const sd = new THREE.Vector3();
+function sunDir(hour, out) {     // 单位日向量：6:00 正东地平、12:30 近天顶、18:00 正西、夜间没入地平之下
+  const alt = (Math.PI / 2) * Math.sin((Math.PI * (hour - 6)) / 12);
+  const azi = (Math.PI * (hour - 6)) / 12;
+  const ca = Math.cos(alt);
+  return out.set(ca * Math.cos(azi), Math.sin(alt), ca * Math.sin(azi));
+}
+function applyDaylight(hour) {
+  let lo = SKYKF[0], hi = SKYKF[SKYKF.length - 1];
+  for (let i = 0; i < SKYKF.length - 1; i++) {
+    if (hour >= SKYKF[i].h && hour < SKYKF[i + 1].h) { lo = SKYKF[i]; hi = SKYKF[i + 1]; break; }
+  }
+  const f = clamp((hour - lo.h) / ((hi.h - lo.h) || 1), 0, 1);
+  const L = (a, b) => a + (b - a) * f;
+
+  scene.fog.color.copy(lo.fogC).lerp(hi.fogC, f);
+  scene.background.copy(scene.fog.color);
+  scene.fog.density = L(lo.fogD, hi.fogD);
+  sky.skyU.topColor.value.copy(lo.topC).lerp(hi.topC, f);
+  sky.skyU.bottomColor.value.copy(lo.horC).lerp(hi.horC, f);
+  ambient.color.copy(lo.ambCC).lerp(hi.ambCC, f); ambient.intensity = L(lo.ambI, hi.ambI);
+  sun.color.copy(lo.sunCC).lerp(hi.sunCC, f);     sun.intensity = L(lo.sunI, hi.sunI);
+  warm.intensity = L(lo.warmI, hi.warmI);
+  sky.cloudMat.color.copy(lo.cloudCC).lerp(hi.cloudCC, f); sky.cloudMat.opacity = L(lo.cloudOp, hi.cloudOp);
+  const dayAmt = L(lo.day, hi.day);
+  for (const k of matKeys) M[k].color.copy(nightCol[k]).lerp(dayCol[k], dayAmt);
+  M.cab.emissiveIntensity = L(lo.cabE, hi.cabE);
+  document.body.classList.toggle("day", dayAmt > 0.5);
+
+  sunDir(hour, sd);
+  // 平行光：维持太阳方位，但仰角钳到 ≥6°，避免太阳没入地平后阴影翻面
+  const horiz = Math.hypot(sd.x, sd.z) || 1e-4;
+  const altL = Math.max(Math.asin(clamp(sd.y, -1, 1)), 0.105), caL = Math.cos(altL);
+  sun.position.set((sd.x / horiz) * caL * SUN_R, Math.sin(altL) * SUN_R, (sd.z / horiz) * caL * SUN_R);
+  // 可见太阳/光晕落在真实日位（可没入地平），颜色随光照统一暖化
+  const sunVis = smoothstep(-0.16, 0.04, sd.y);
+  sky.sunBall.position.copy(sd).multiplyScalar(SUN_VIS_R);
+  sky.sunGlow.position.copy(sky.sunBall.position);
+  sky.sunBall.material.color.copy(sun.color); sky.sunGlow.material.color.copy(sun.color);
+  sky.sunBall.material.transparent = true;
+  sky.sunGlow.material.opacity = 0.9 * sunVis; sky.sunBall.material.opacity = sunVis;
+  sky.sunBall.visible = sky.sunGlow.visible = sunVis > 0.01;
+  // 月亮在太阳对侧；星空随入夜渐显
+  const moonVis = smoothstep(0.06, -0.10, sd.y);
+  sky.moon.position.copy(sd).multiplyScalar(-MOON_VIS_R);
+  sky.moonGlow.position.copy(sky.moon.position);
+  sky.moonGlow.material.opacity = 0.4 * moonVis;
+  sky.moon.visible = sky.moonGlow.visible = moonVis > 0.01;
+  const nightF = smoothstep(0.06, -0.12, sd.y);
+  stars.material.transparent = true; stars.material.opacity = nightF; stars.visible = nightF > 0.01;
+}
+
+/* 昼夜按钮：自动（跟随时钟）→ 固定白天 → 固定夜间 → 自动 */
+let timeMode = "auto";
+const timeHour = (clockHour) => timeMode === "auto" ? clockHour : (timeMode === "day" ? 12.5 : 0.5);
+btnTheme.onclick = () => {
+  timeMode = timeMode === "auto" ? "day" : (timeMode === "day" ? "night" : "auto");
+  btnTheme.textContent = timeMode === "auto" ? "🕐 自动昼夜" : (timeMode === "day" ? "☀️ 固定白天" : "🌙 固定夜间");
+};
+btnTheme.textContent = "🕐 自动昼夜";
+applyDaylight(6.0);
 function setView(v) {
   view = v; selectedId = null;
   btnFcfs.className = v === "fcfs" ? "on-blue" : "";
@@ -776,6 +844,7 @@ function loop(now) {
     meshById = new Map();
   }
   const sim = sims[renderedView];
+  applyDaylight(timeHour(((((sim.clockBase + sim.t) / 3600) % 24) + 24) % 24));
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
