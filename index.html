@@ -604,6 +604,87 @@ function buildPeople(scene) {
   return people;
 }
 
+/* ------- 停机坪生活：廊桥（随登机对接 / 推出收回）+ 地服车辆 + 引导线 / 机位号 + 地勤 ------- */
+function gateNumTexture(n) {
+  const cv = document.createElement("canvas"); cv.width = cv.height = 64;
+  const c = cv.getContext("2d");
+  c.fillStyle = "#f2e9c0"; c.font = "bold 46px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillText(String(n), 32, 36);
+  return new THREE.CanvasTexture(cv);
+}
+function buildApronLife(scene) {
+  const mat = {
+    bridge: new THREE.MeshStandardMaterial({ color: 0xc9d2de, roughness: .6, metalness: .2 }),
+    dark: new THREE.MeshStandardMaterial({ color: 0x222b3a, roughness: .5, metalness: .3 }),
+    tug: new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: .5 }),
+    cart: new THREE.MeshStandardMaterial({ color: 0x39435c, roughness: .75 }),
+    truck: new THREE.MeshStandardMaterial({ color: 0xe6ebf2, roughness: .55 }),
+    fuel: new THREE.MeshStandardMaterial({ color: 0x46506a, roughness: .6 }),
+    hiviz: new THREE.MeshStandardMaterial({ color: 0xff8a3c, roughness: .8, emissive: 0xff6a00, emissiveIntensity: .12 }),
+    head: new THREE.MeshStandardMaterial({ color: 0xe8c39e, roughness: .8 }),
+    wheel: new THREE.MeshStandardMaterial({ color: 0x1b2028, roughness: .9 }),
+    chock: new THREE.MeshStandardMaterial({ color: 0xe8b23a, roughness: .85 }),
+    line: new THREE.MeshBasicMaterial({ color: 0xf2c14e }),
+  };
+  const wheelGeo = new THREE.CylinderGeometry(.34, .34, .34, 8);
+  const headGeo = new THREE.SphereGeometry(.22, 6, 6), bodyGeo = new THREE.CylinderGeometry(.26, .32, 1.0, 6);
+  const box = (parent, g, m, x, y, z) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); parent.add(o); return o; };
+  const bg = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  const wheels4 = (parent, w, l) => { for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const o = new THREE.Mesh(wheelGeo, mat.wheel); o.rotation.x = Math.PI / 2; o.position.set(sx * w, .34, sz * l); parent.add(o); } };
+  const rigs = [];
+
+  for (let i = 0; i < GATE_COUNT; i++) {
+    const gx = gateX(i);
+    // 机位引导线（滑入道 → 机位）+ 机位号
+    const line = box(scene, new THREE.PlaneGeometry(.45, GATE_Z - IN_TAXI_Z), mat.line, gx, .045, (GATE_Z + IN_TAXI_Z) / 2);
+    line.rotation.x = -Math.PI / 2;
+    const num = box(scene, new THREE.PlaneGeometry(5, 5), new THREE.MeshBasicMaterial({ map: gateNumTexture(i + 1), transparent: true }), gx, .05, GATE_Z + 7);
+    num.rotation.x = -Math.PI / 2; num.rotation.z = Math.PI;
+
+    // 廊桥：航站楼旋转柱 → 伸缩通道 → 接机舱口的活动端
+    const R = { x: gx, y: 3.0, z: 2 }, D = { x: gx - 1.6, z: -7 };
+    const dx = D.x - R.x, dz = D.z - R.z, fullLen = Math.hypot(dx, dz);
+    const bridge = new THREE.Group(); bridge.position.set(R.x, R.y, R.z); bridge.rotation.y = Math.atan2(dx, dz); scene.add(bridge);
+    box(bridge, new THREE.CylinderGeometry(1.3, 1.3, 3.4, 12), mat.bridge, 0, 0, 0);
+    const tunnel = box(bridge, bg(2.0, 2.2, 1), mat.bridge, 0, 0, 0);
+    const tGlass = box(bridge, bg(2.06, 0.9, 1), mat.dark, 0, .45, 0);
+    const cab = box(bridge, bg(2.6, 2.6, 1.8), mat.bridge, 0, -.3, 0);
+
+    // 地服（停靠时显现）：行李拖车小火车 / 客梯餐车 / GPU 电源车 / 地勤 / 轮挡
+    const gse = new THREE.Group(); gse.position.set(gx, 0, -13); gse.visible = false; scene.add(gse);
+    const train = new THREE.Group(); train.position.set(4.6, 0, 1); gse.add(train);
+    box(train, bg(1.6, 1.1, 1.4), mat.tug, 0, .8, 0); wheels4(train, .7, .5);
+    for (let c = 1; c <= 2; c++) { box(train, bg(1.4, .9, 1.3), mat.cart, 0, .7, c * 1.9); box(train, bg(1.5, .5, 1.4), mat.dark, 0, 1.2, c * 1.9); }
+    const truck = new THREE.Group(); truck.position.set(-5.0, 0, 0); gse.add(truck);
+    box(truck, bg(2.2, 1.4, 2.0), mat.truck, 0, .9, 0); box(truck, bg(1.6, 1.6, 1.8), mat.truck, 0, 2.0, .2); wheels4(truck, .9, .8);
+    box(gse, bg(1.2, 1.0, 1.6), mat.fuel, 1.6, .6, -4);
+    for (const [px, pz] of [[1.3, -1], [-1.5, .7]]) { const p = new THREE.Group(); box(p, bodyGeo, mat.hiviz, 0, .55, 0); box(p, headGeo, mat.head, 0, 1.25, 0); p.position.set(px, 0, pz); gse.add(p); }
+    box(gse, bg(.5, .35, .3), mat.chock, .2, .2, 2.4);
+
+    rigs.push({ tunnel, tGlass, cab, fullLen, gse, dock: 0, _occ: false });
+  }
+
+  const setDock = (r, d) => {                       // d=0 收回（仅短节），d=1 抵舱口
+    const len = 1.0 + (r.fullLen - 2.3) * d, mid = 1.3 + len / 2, far = 1.3 + len;
+    r.tunnel.scale.z = len; r.tunnel.position.z = mid;
+    r.tGlass.scale.z = len; r.tGlass.position.z = mid;
+    r.cab.position.z = far;
+  };
+  for (const r of rigs) setDock(r, 0);
+
+  return {
+    update(sim, dt) {
+      for (const r of rigs) r._occ = false;
+      for (const f of sim.flights) if (f.phase === "atGate" && f.gate) rigs[f.gate.i]._occ = true;
+      for (const r of rigs) {
+        r.dock += ((r._occ ? 1 : 0) - r.dock) * Math.min(1, dt * 1.5);
+        setDock(r, r.dock);
+        r.gse.visible = r.dock > 0.5;
+      }
+    },
+  };
+}
+
 /* ============================================================
    应用入口
    ============================================================ */
@@ -646,6 +727,7 @@ M.curtain.uniforms.skyHor.value = sky.skyU.bottomColor.value;
 buildTrees(scene, M);
 const buses = buildBuses(scene);
 const people = buildPeople(scene);
+const apron = buildApronLife(scene);
 /* 阴影分工：所有标准材质实体「接收」阴影；只有立体几何（航站楼/塔台/树/车/人）「投射」，
    平铺的地面/跑道/滑行道/机位（PlaneGeometry）只接收不投射 —— 避免共面平面自投影产生暗纹。
    灯点(Points)、标线/玻璃(MeshBasic)、天空穹顶(Shader)不参与 */
@@ -1076,6 +1158,7 @@ function loop(now) {
   applyStorm(realDt);
   updateCamera(realDt);
   contrails.update(realDt);
+  apron.update(sim, realDt);
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
