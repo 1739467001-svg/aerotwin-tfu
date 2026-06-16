@@ -280,6 +280,32 @@ function sunBirdTexture() {
 
 /* 天府航站楼群：T1/T2 呈「神鸟展翅」V 形对称展开，
    中央 GTC 圆厅屋顶铺太阳神鸟金饰（与实景一致），塔台立于中轴 */
+/* 玻璃幕墙：菲涅尔天空反射着色器 —— 掠射角映射天穹渐变（随昼夜/雷暴自动变），
+   正视显玻璃本色；零渲染开销，靠共享 sky 颜色对象自动跟随，无需逐帧更新 uniform。 */
+const CURTAIN_VERT =                       // cameraPosition 仅 three 顶点阶段内置 → 此处算视向并透传
+  "varying vec3 vWN; varying vec3 vView;" +
+  "void main(){ vec4 wp = modelMatrix * vec4(position,1.0);" +
+  " vView = cameraPosition - wp.xyz; vWN = normalize(mat3(modelMatrix) * normal);" +
+  " gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }";
+const CURTAIN_FRAG =
+  "uniform vec3 skyTop; uniform vec3 skyHor; uniform vec3 base; uniform float reflectivity; uniform float fpow;" +
+  "varying vec3 vWN; varying vec3 vView;" +
+  "void main(){ vec3 V = normalize(vView); vec3 N = normalize(vWN);" +
+  " float fres = pow(1.0 - max(dot(N, V), 0.0), fpow);" +
+  " vec3 R = reflect(-V, N); float up = clamp(R.y * 0.5 + 0.5, 0.0, 1.0);" +
+  " vec3 sky = mix(skyHor, skyTop, up);" +
+  " float refl = clamp(mix(0.18, 1.0, fres) * reflectivity, 0.0, 1.0);" +
+  " gl_FragColor = vec4(mix(base, sky, refl), 1.0); }";
+function makeCurtain(base) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      skyTop: { value: new THREE.Color(0x3d8fd6) }, skyHor: { value: new THREE.Color(0xcfe9fb) },
+      base: { value: new THREE.Color(base) }, reflectivity: { value: 0.85 }, fpow: { value: 3.0 },
+    },
+    vertexShader: CURTAIN_VERT, fragmentShader: CURTAIN_FRAG,
+  });
+}
+
 function buildTerminal(scene, M, birdTex) {
   const wing = (sign) => {
     const g = new THREE.Group();
@@ -287,7 +313,7 @@ function buildTerminal(scene, M, birdTex) {
     g.rotation.y = -sign * .11;   // 两翼向陆侧后掠，形成 V 形
     const body = new THREE.Mesh(new THREE.BoxGeometry(150, 7, 16), M.terminal);
     body.position.set(sign * 75, 3.5, 4); g.add(body);
-    const glow = new THREE.Mesh(new THREE.BoxGeometry(148, 2.4, .6), new THREE.MeshBasicMaterial({ color: 0x3a5a96 }));
+    const glow = new THREE.Mesh(new THREE.BoxGeometry(148, 2.4, .6), M.curtain);
     glow.position.set(sign * 75, 4.2, -4); g.add(glow);
     // 波浪屋顶：翼根高、翼梢低，叠正弦起伏
     for (let x = 4; x <= 146; x += 7.9) {
@@ -301,7 +327,7 @@ function buildTerminal(scene, M, birdTex) {
   // GTC 圆厅 + 屋顶太阳神鸟
   const gtc = new THREE.Mesh(new THREE.CylinderGeometry(21, 22, 8, 36), M.terminal);
   gtc.position.set(0, 4, 26); scene.add(gtc);
-  const gtcGlass = new THREE.Mesh(new THREE.CylinderGeometry(21.3, 21.3, 2, 36), new THREE.MeshBasicMaterial({ color: 0x3a5a96 }));
+  const gtcGlass = new THREE.Mesh(new THREE.CylinderGeometry(21.3, 21.3, 2, 36), M.curtain);
   gtcGlass.position.set(0, 3, 26); scene.add(gtcGlass);
   const emblem = new THREE.Mesh(new THREE.CircleGeometry(18.5, 48),
     new THREE.MeshBasicMaterial({ map: birdTex, transparent: true }));
@@ -319,6 +345,7 @@ function buildAirport(scene) {
     terminal: mk(0x121b30, { roughness: .6, metalness: .2 }),
     tower: mk(0x1a2440, { roughness: .5 }),
     cab: mk(0x223155, { roughness: .95, emissive: 0x16335e, emissiveIntensity: .7 }),
+    curtain: makeCurtain(0x2a4673),   // GTC 圆厅 + 两翼玻璃幕墙（菲涅尔天空反射）
   };
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(2200, 1400), M.ground);
   ground.rotation.x = -Math.PI / 2; ground.position.y = -.1; scene.add(ground);
@@ -613,6 +640,9 @@ warm.position.set(0, 60, 30); scene.add(warm);
 
 const { rwMats, towerLight, M, stars } = buildAirport(scene);
 const sky = buildSky(scene);
+// 玻璃幕墙复用 sky 的颜色对象 → 反射随昼夜/雷暴实时变化（applyDaylight 原地改色即生效）
+M.curtain.uniforms.skyTop.value = sky.skyU.topColor.value;
+M.curtain.uniforms.skyHor.value = sky.skyU.bottomColor.value;
 buildTrees(scene, M);
 const buses = buildBuses(scene);
 const people = buildPeople(scene);
