@@ -25,7 +25,8 @@
     bloom: { enabled: true, threshold: 0.72, knee: 0.20, strength: 0.95, radius: 1.0, iterations: 3, scale: 4 },
     dof:   { enabled: true, focusY: 0.52, range: 0.16, strength: 0.62, radius: 1.4, iterations: 2, scale: 2 },
     fxaa:  { enabled: true },
-    tone:  { enabled: false, exposure: 1.0 }, // 默认关：保留深空配色；开则 ACES+sRGB（会整体提亮，需重调光照）
+    // ACES 高光柔化 + 轻度 sRGB，调和深空配色（invGamma：1.0=纯 ACES 不提亮，0.9=默认微提，0.4545=完整 sRGB 较亮）
+    tone:  { enabled: true, exposure: 1.0, invGamma: 0.9 },
   };
 
   const VERT = "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }";
@@ -62,7 +63,7 @@
     "varying vec2 vUv;",
     "uniform sampler2D tScene; uniform sampler2D tSceneBlur; uniform sampler2D tBloom;",
     "uniform float bloomStrength; uniform float focusY; uniform float range; uniform float dofStrength;",
-    "uniform int dofOn; uniform int bloomOn; uniform int toneOn; uniform float exposure;",
+    "uniform int dofOn; uniform int bloomOn; uniform int toneOn; uniform float exposure; uniform float invGamma;",
     "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }",
     "void main(){",
     "  vec3 col = texture2D(tScene, vUv).rgb;",
@@ -74,7 +75,7 @@
     "    col = mix(col, blurd, coc);",
     "  }",
     "  if (bloomOn == 1) { col += texture2D(tBloom, vUv).rgb * bloomStrength; }",
-    "  if (toneOn == 1) { col *= exposure; col = aces(col); col = pow(col, vec3(1.0/2.2)); }",
+    "  if (toneOn == 1) { col *= exposure; col = aces(col); col = pow(col, vec3(invGamma)); }",
     "  gl_FragColor = vec4(col, 1.0);",
     "}",
   ].join("\n");
@@ -131,7 +132,7 @@
       bloomStrength: { value: cfg.bloom.strength }, focusY: { value: cfg.dof.focusY },
       range: { value: cfg.dof.range }, dofStrength: { value: cfg.dof.strength },
       dofOn: { value: cfg.dof.enabled ? 1 : 0 }, bloomOn: { value: cfg.bloom.enabled ? 1 : 0 },
-      toneOn: { value: cfg.tone.enabled ? 1 : 0 }, exposure: { value: cfg.tone.exposure },
+      toneOn: { value: cfg.tone.enabled ? 1 : 0 }, exposure: { value: cfg.tone.exposure }, invGamma: { value: cfg.tone.invGamma },
     });
     const mFxaa   = shader(FRAG_FXAA,   { tDiffuse: { value: null }, texel: { value: new THREE.Vector2() } });
     const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mCopy);
@@ -207,6 +208,7 @@
       mComp.uniforms.bloomOn.value = cfg.bloom.enabled ? 1 : 0;
       mComp.uniforms.toneOn.value = cfg.tone.enabled ? 1 : 0;
       mComp.uniforms.exposure.value = cfg.tone.exposure;
+      mComp.uniforms.invGamma.value = cfg.tone.invGamma;
     }
 
     return { render, setSize, dispose, apply, cfg };
