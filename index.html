@@ -136,27 +136,58 @@ const {
 /* ============================================================
    渲染层（three.js）
    ============================================================ */
+/* 共享几何 / 材质：所有飞机同款，~40 架共用一套（省内存、降 GC；逐机差异仅选择环） */
+const PLANE = {
+  geo: {
+    fus: new THREE.CylinderGeometry(.95, .85, 8.5, 12), nose: new THREE.ConeGeometry(.93, 2.2, 12),
+    wing: new THREE.BoxGeometry(2.6, .22, 11), tailH: new THREE.BoxGeometry(1.6, .18, 4.2), fin: new THREE.BoxGeometry(1.7, 2.3, .22),
+    pylon: new THREE.BoxGeometry(1.0, .5, .2), engine: new THREE.CylinderGeometry(.55, .5, 2.6, 12), inlet: new THREE.CircleGeometry(.42, 14),
+    windscreen: new THREE.BoxGeometry(.7, .5, 1.0), cabin: new THREE.BoxGeometry(5.4, .34, .05),
+    dot: new THREE.SphereGeometry(.26, 8, 8), dotS: new THREE.SphereGeometry(.2, 6, 6), trail: new THREE.PlaneGeometry(1, 1),
+  },
+  mat: {
+    body: new THREE.MeshStandardMaterial({ color: 0xd8dfeb, roughness: .45, metalness: .4 }),
+    acc: new THREE.MeshStandardMaterial({ color: 0xff5347, roughness: .4, metalness: .3, emissive: 0xff5347, emissiveIntensity: .25 }),
+    engine: new THREE.MeshStandardMaterial({ color: 0xb7bfce, roughness: .5, metalness: .55 }),
+    inlet: new THREE.MeshBasicMaterial({ color: 0x10151f }),
+    window: new THREE.MeshStandardMaterial({ color: 0x223044, roughness: .3, metalness: .2, emissive: 0xffe7b0, emissiveIntensity: .55 }),
+    glass: new THREE.MeshStandardMaterial({ color: 0x0a0f18, roughness: .15, metalness: .6, emissive: 0x9fd8ff, emissiveIntensity: .2 }),
+    navR: new THREE.MeshBasicMaterial({ color: 0xff2b2b }), navG: new THREE.MeshBasicMaterial({ color: 0x2bff6a }),
+    navW: new THREE.MeshBasicMaterial({ color: 0xfff4e0 }), strobe: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+    landing: new THREE.MeshBasicMaterial({ color: 0xfff6e0 }), beacon: new THREE.MeshBasicMaterial({ color: 0xff3b30 }),
+    trail: new THREE.MeshBasicMaterial({ map: softGlowTexture(), color: 0xdfeaff, transparent: true, opacity: .5, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
+  },
+};
 function buildPlaneMesh() {
-  const g = new THREE.Group();
-  const body = new THREE.MeshStandardMaterial({ color: 0xd8dfeb, roughness: .45, metalness: .35 });
-  const acc = new THREE.MeshStandardMaterial({ color: 0xff5347, roughness: .4, metalness: .3, emissive: 0xff5347, emissiveIntensity: .25 });
-  const fus = new THREE.Mesh(new THREE.CylinderGeometry(.95, .85, 8.5, 10), body);
-  fus.rotation.z = -Math.PI / 2; g.add(fus);
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(.93, 2.2, 10), body);
-  nose.rotation.z = -Math.PI / 2; nose.position.x = 5.3; g.add(nose);
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(2.6, .22, 11), body);
-  wing.position.set(.2, -.2, 0); g.add(wing);
-  const tailH = new THREE.Mesh(new THREE.BoxGeometry(1.6, .18, 4.2), body);
-  tailH.position.set(-4.1, .4, 0); g.add(tailH);
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 2.3, .22), acc);
-  fin.position.set(-4.2, 1.4, 0); g.add(fin);
-  const beacon = new THREE.Mesh(new THREE.SphereGeometry(.32, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff5347 }));
-  beacon.position.set(0, 1.1, 0); beacon.name = "beacon"; g.add(beacon);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(6.5, 7.6, 32),
+  const G = PLANE.geo, Mt = PLANE.mat, g = new THREE.Group();
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
+  add(G.fus, Mt.body, 0, 0, 0).rotation.z = -Math.PI / 2;
+  add(G.nose, Mt.body, 5.3, 0, 0).rotation.z = -Math.PI / 2;
+  add(G.wing, Mt.body, .2, -.2, 0); add(G.tailH, Mt.body, -4.1, .4, 0); add(G.fin, Mt.acc, -4.2, 1.4, 0);
+  for (const z of [-3.0, 3.0]) {                 // 翼下双发 + 暗色进气口
+    add(G.pylon, Mt.body, .7, -.5, z);
+    add(G.engine, Mt.engine, 1.0, -.95, z).rotation.z = -Math.PI / 2;
+    add(G.inlet, Mt.inlet, 2.32, -.95, z).rotation.y = Math.PI / 2;
+  }
+  add(G.windscreen, Mt.glass, 4.2, .55, 0);      // 驾驶舱风挡
+  add(G.cabin, Mt.window, -.2, .35, -.96); add(G.cabin, Mt.window, -.2, .35, .96);   // 两侧客舱舷窗带
+  add(G.dotS, Mt.navR, .2, -.1, -5.5); add(G.dotS, Mt.navG, .2, -.1, 5.5); add(G.dotS, Mt.navW, -5.2, .3, 0);  // 航行灯 左红/右绿/尾白（常亮）
+  const bT = add(G.dot, Mt.beacon, 0, 1.1, 0), bB = add(G.dotS, Mt.beacon, 0, -1.0, 0);                        // 防撞信标 机背/机腹
+  const stL = add(G.dotS, Mt.strobe, .2, -.1, -5.7), stR = add(G.dotS, Mt.strobe, .2, -.1, 5.7);               // 白色频闪 翼尖
+  stL.visible = stR.visible = false;
+  const land = add(G.dot, Mt.landing, 2.0, -.8, 0); land.visible = false;                                      // 起降灯 前向白光
+  const trail = new THREE.Group();               // 起飞尾流：交叉双面软光带，仅爬升显现
+  for (let i = 0; i < 2; i++) {
+    const tp = new THREE.Mesh(G.trail, Mt.trail); tp.scale.set(9, 1.7, 1); tp.position.x = -4.5;
+    if (i) tp.rotation.x = Math.PI / 2; trail.add(tp);
+  }
+  trail.position.set(-5.0, -.15, 0); trail.visible = false; g.add(trail);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(6.5, 7.6, 32),     // 选择环：逐机独立材质，脉冲不影响他机
     new THREE.MeshBasicMaterial({ color: 0xff5347, transparent: true, opacity: 0, side: THREE.DoubleSide }));
-  ring.rotation.x = -Math.PI / 2; ring.position.y = -.4; ring.name = "selring"; g.add(ring);
+  ring.rotation.x = -Math.PI / 2; ring.position.y = -.4; g.add(ring);
   g.traverse((o) => { if (o.isMesh && o.material.isMeshStandardMaterial) o.castShadow = true; });
   g.scale.setScalar(1.15);
+  g.userData.fx = { bT, bB, stL, stR, land, trail, ring };
   return g;
 }
 
@@ -866,10 +897,17 @@ function loop(now) {
     while (dy < -Math.PI) dy += Math.PI * 2;
     m.rotation.y += dy * Math.min(1, realDt * 6);
     m.rotation.z = Math.atan2(d.y, Math.hypot(d.x, d.z)) * .8;
-    const beacon = m.getObjectByName("beacon");
-    if (beacon) beacon.material.color.setHex(Math.sin(now * .008 + f.id) > .6 ? 0xff5347 : 0x44211f);
-    const ring = m.getObjectByName("selring");
-    if (ring) ring.material.opacity = selectedId === f.id ? .5 + .3 * Math.sin(now * .005) : 0;
+    const fxp = m.userData.fx;
+    if (fxp) {
+      const tt = now * 0.001, ph = f.phase;
+      fxp.bT.visible = Math.sin(tt * 6.0 + f.id * 0.7) > 0.55;            // 防撞信标 机背/机腹异相慢闪
+      fxp.bB.visible = Math.sin(tt * 6.0 + f.id * 0.7 + 1.1) > 0.70;
+      const ts = (tt + f.id * 0.37) % 1.25;                              // 白色频闪 ~1.25s 双闪（按 id 错相）
+      fxp.stL.visible = fxp.stR.visible = ts < 0.05 || (ts > 0.12 && ts < 0.17);
+      fxp.land.visible = ph === "approach" || ph === "landing" || ph === "takeoff" || ph === "taxiIn" || ph === "taxiOut";  // 起降灯
+      fxp.trail.visible = ph === "takeoff" && f.pos.y > 2;               // 起飞尾流（爬升中）
+      fxp.ring.material.opacity = selectedId === f.id ? 0.5 + 0.3 * Math.sin(now * 0.005) : 0;
+    }
   }
 
   for (const k of ["A","B"]) {
