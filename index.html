@@ -58,6 +58,10 @@
   #detail .callsign { font-size: 14px; font-weight: 800; color: var(--accent); }
   #detail .sub { font-size: 11px; color: var(--dim); margin-bottom: 6px; }
   #logPanel { bottom: 14px; left: 280px; right: 264px; padding: 8px 14px; max-height: 110px; overflow: hidden; }
+  #camPanel { bottom: 14px; right: 14px; width: 134px; padding: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+  #camPanel .cam-h { width: 100%; font-size: 10px; color: var(--dim); letter-spacing: 2px; margin-bottom: 2px; }
+  #camPanel button { flex: 1 1 calc(50% - 3px); padding: 5px 0; }
+  #camPanel #btnFollow { flex: 1 1 100%; }
   #logTitle { font-size: 10px; color: var(--dim); letter-spacing: 2px; margin-bottom: 4px; }
   .ev { font-size: 11px; color: var(--dim); line-height: 1.6; }
   .ev:first-of-type { color: var(--text); }
@@ -117,6 +121,15 @@
 <div id="logPanel" class="panel">
   <div id="logTitle">塔台事件 · 拖拽旋转 / 滚轮缩放 / 点击飞机查看</div>
   <div id="logBody"></div>
+</div>
+
+<div id="camPanel" class="panel">
+  <span class="cam-h">机位 · 视角</span>
+  <button data-view="overview" class="on-blue">总览</button>
+  <button data-view="tower">塔台</button>
+  <button data-view="approach">进近</button>
+  <button data-view="top">俯视</button>
+  <button id="btnFollow">🎯 跟随</button>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -588,6 +601,7 @@ let meshById = new Map();
 let renderedView = view;
 
 const cam = { theta: .12, phi: .78, r: 380, target: new THREE.Vector3(-10, 0, -55) };
+const camGoal = { theta: cam.theta, phi: cam.phi, r: cam.r, target: cam.target.clone() };
 function applyCam() {
   camera.position.set(
     cam.target.x + cam.r * Math.sin(cam.phi) * Math.sin(cam.theta),
@@ -598,6 +612,38 @@ function applyCam() {
 }
 applyCam();
 
+/* 预设机位（平滑过渡）+「跟随选中飞机」运镜 */
+const VIEWS = {
+  overview: { theta: .12, phi: .78, r: 380, target: [-10, 0, -55] },   // 总览
+  tower:    { theta: -.30, phi: .72, r: 170, target: [0, 6, -40] },     // 塔台俯瞰航站区
+  approach: { theta: -1.60, phi: 1.40, r: 140, target: [-150, 4, -110] }, // 02R 进近端贴地望接地
+  top:      { theta: .12, phi: .05, r: 560, target: [0, 0, -60] },      // 正俯视
+};
+let follow = false, viewName = "overview";
+function goView(name) {
+  const v = VIEWS[name]; if (!v) return;
+  follow = false; viewName = name;
+  camGoal.theta = v.theta; camGoal.phi = v.phi; camGoal.r = v.r;
+  camGoal.target.set(v.target[0], v.target[1], v.target[2]);
+  syncCamButtons();
+}
+function updateCamera(dt) {       // 每帧把 cam 平滑逼近 camGoal（指数平滑，~1s 过渡）
+  if (follow) {
+    const pf = sims[renderedView].flights.find((x) => x.id === selectedId && x.phase !== "departed");
+    if (pf) camGoal.target.set(pf.pos.x, pf.pos.y + 4, pf.pos.z);
+    else { follow = false; syncCamButtons(); }
+  }
+  const k = Math.min(1, dt * 3);
+  let dth = camGoal.theta - cam.theta;
+  while (dth > Math.PI) dth -= Math.PI * 2;
+  while (dth < -Math.PI) dth += Math.PI * 2;
+  cam.theta += dth * k;
+  cam.phi += (camGoal.phi - cam.phi) * k;
+  cam.r += (camGoal.r - cam.r) * k;
+  cam.target.lerp(camGoal.target, k);
+  applyCam();
+}
+
 let dragging = false, movedDist = 0, px = 0, py = 0;
 renderer.domElement.addEventListener("mousedown", (e) => { dragging = true; movedDist = 0; px = e.clientX; py = e.clientY; });
 window.addEventListener("mousemove", (e) => {
@@ -607,12 +653,14 @@ window.addEventListener("mousemove", (e) => {
   px = e.clientX; py = e.clientY;
   cam.theta -= dx * .005;
   cam.phi = Math.max(.18, Math.min(1.42, cam.phi - dy * .004));
+  camGoal.theta = cam.theta; camGoal.phi = cam.phi;   // 拖拽即取消预设过渡的转动；跟随时仍绕机环绕
   applyCam();
 });
 window.addEventListener("mouseup", () => { dragging = false; });
 renderer.domElement.addEventListener("wheel", (e) => {
   e.preventDefault();
   cam.r = Math.max(90, Math.min(950, cam.r * (1 + e.deltaY * .001)));
+  camGoal.r = cam.r;
   applyCam();
 }, { passive: false });
 
@@ -844,6 +892,23 @@ $("flightList").addEventListener("click", (e) => {
   if (row) selectedId = +row.dataset.fid;
 });
 
+/* ------- 相机：预设机位 + 跟随运镜 ------- */
+const btnFollow = $("btnFollow");
+document.querySelectorAll("[data-view]").forEach((b) => { b.onclick = () => goView(b.dataset.view); });
+btnFollow.onclick = () => {
+  follow = !follow;
+  if (follow) {   // 开跟随却无选中活动航班时，自动锁定最近一架
+    const act = sims[renderedView].flights.filter((x) => x.phase !== "departed");
+    if (!act.some((x) => x.id === selectedId) && act.length) selectedId = act[act.length - 1].id;
+  }
+  syncCamButtons();
+};
+function syncCamButtons() {
+  document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("on-blue", !follow && b.dataset.view === viewName));
+  btnFollow.classList.toggle("on", follow);
+}
+syncCamButtons();
+
 /* ------- UI 刷新（4Hz） ------- */
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 function refreshUI() {
@@ -948,6 +1013,7 @@ function loop(now) {
   const sim = sims[renderedView];
   applyDaylight(timeHour(((((sim.clockBase + sim.t) / 3600) % 24) + 24) % 24));
   applyStorm(realDt);
+  updateCamera(realDt);
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
