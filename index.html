@@ -121,6 +121,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="sim.js"></script>
+<script src="fx.js"></script>
 <script>
 /* ============================================================
    AEROTWIN web · 渲染 / UI 层（three.js）
@@ -154,6 +155,7 @@ function buildPlaneMesh() {
   const ring = new THREE.Mesh(new THREE.RingGeometry(6.5, 7.6, 32),
     new THREE.MeshBasicMaterial({ color: 0xff5347, transparent: true, opacity: 0, side: THREE.DoubleSide }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = -.4; ring.name = "selring"; g.add(ring);
+  g.traverse((o) => { if (o.isMesh && o.material.isMeshStandardMaterial) o.castShadow = true; });
   g.scale.setScalar(1.15);
   return g;
 }
@@ -496,12 +498,23 @@ scene.fog = new THREE.FogExp2(0x070b14, .00095);
 const camera = new THREE.PerspectiveCamera(52, 1, 1, 3000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+/* 太阳软阴影：飞机投影到停机坪、航站楼投影到地面 —— 3D「变真」的关键一步 */
+const SHADOW_MAP = 4096;   // 阴影贴图分辨率（性能吃紧可降到 2048）
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 mount.appendChild(renderer.domElement);
 
 const ambient = new THREE.AmbientLight(0x8aa0cc, .55);
 scene.add(ambient);
 const sun = new THREE.DirectionalLight(0xbfd2ff, .85);
 sun.position.set(-200, 300, 180); scene.add(sun);
+sun.castShadow = true;
+sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 1.0;
+{ const sc = sun.shadow.camera;   // 正交视锥覆盖整个机场地块
+  sc.left = -450; sc.right = 450; sc.top = 340; sc.bottom = -340; sc.near = 80; sc.far = 900;
+  sc.updateProjectionMatrix(); }
 const warm = new THREE.PointLight(0xff5347, .6, 400);
 warm.position.set(0, 60, 30); scene.add(warm);
 
@@ -510,6 +523,15 @@ const sky = buildSky(scene);
 buildTrees(scene, M);
 const buses = buildBuses(scene);
 const people = buildPeople(scene);
+/* 阴影分工：所有标准材质实体「接收」阴影；只有立体几何（航站楼/塔台/树/车/人）「投射」，
+   平铺的地面/跑道/滑行道/机位（PlaneGeometry）只接收不投射 —— 避免共面平面自投影产生暗纹。
+   灯点(Points)、标线/玻璃(MeshBasic)、天空穹顶(Shader)不参与 */
+scene.traverse((o) => {
+  if (o.isMesh && o.material && o.material.isMeshStandardMaterial) {
+    o.receiveShadow = true;
+    o.castShadow = o.geometry.type !== "PlaneGeometry";
+  }
+});
 const planesGroup = new THREE.Group(); scene.add(planesGroup);
 let meshById = new Map();
 let renderedView = view;
@@ -562,10 +584,16 @@ renderer.domElement.addEventListener("click", (e) => {
   selectedId = id;
 });
 
+/* 后期光影合成器（Bloom + 移轴景深 + FXAA）；缺失或异常时优雅回退为直接渲染 */
+const fx = (window.AeroFX && AeroFX.createFX) ? AeroFX.createFX(renderer, scene, camera) : null;
+let fxOk = !!fx;
+window.AEROTWIN_FX = fx;   // 控制台实时调参： AEROTWIN_FX.cfg.bloom.strength=1.3; AEROTWIN_FX.apply()
+
 function resize() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  if (fx) { const db = renderer.getDrawingBufferSize(new THREE.Vector2()); fx.setSize(db.x, db.y); }
 }
 resize();
 window.addEventListener("resize", resize);
@@ -811,7 +839,11 @@ function loop(now) {
     } else label.style.display = "none";
   } else label.style.display = "none";
 
-  renderer.render(scene, camera);
+  if (fxOk) {
+    try { fx.render(); }
+    catch (err) { console.error("[fx] 后期合成异常，已回退为直接渲染：", err); fxOk = false; renderer.setRenderTarget(null); }
+  }
+  if (!fxOk) renderer.render(scene, camera);
 
   uiTimer += realDt;
   if (uiTimer > .25) { uiTimer = 0; refreshUI(); }
