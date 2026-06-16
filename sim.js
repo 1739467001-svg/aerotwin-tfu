@@ -160,6 +160,35 @@ function advance(f, speed, dt) {
   return f.route.d >= f.route.total;
 }
 
+/* ------- 滑行道冲突检测（跟车最小纵向间隔） ------- */
+/* 同一滑行道上多机不再叠合：跟随机沿航向前方 TAXI_SEP 内若有同相位航班，本步即停在原位。
+   各滑行道为单向交通（进港统一驶向机位、离港统一驶向跑道头），故是无环跟车、不会死锁。
+   全局 A* 图寻路与交叉口冲突仍属 v3 方向，此处先做局部纵向防撞。 */
+const TAXI_SEP = 14;
+const TAXI_ALIGN = 0.7; // 同向判据（dir 夹角余弦阈值）：仅对同车道、同向航班跟车
+function taxiLeaderAhead(sim, f, atPos) {
+  for (const o of sim.flights) {
+    if (o === f || o.phase !== f.phase) continue;
+    const wx = o.pos.x - atPos.x, wy = o.pos.y - atPos.y, wz = o.pos.z - atPos.z;
+    if (wx * wx + wy * wy + wz * wz >= TAXI_SEP * TAXI_SEP) continue;            // 间隔足够，忽略
+    if (wx * f.dir.x + wy * f.dir.y + wz * f.dir.z <= 0) continue;               // o 不在前方
+    if (o.dir.x * f.dir.x + o.dir.y * f.dir.y + o.dir.z * f.dir.z > TAXI_ALIGN)  // 且与本机同向
+      return true;            // 同向、前方、近距 → 跟车保持间隔
+  }                           // 汇入口/路口的垂直交汇因不同向被排除（避免环形死锁；路口级精确排序与物理跑道排队属 v3 A* 方向）
+  return false;
+}
+function advanceTaxi(sim, f, speed, dt) {
+  const prevD = f.route.d;
+  f.route.d += speed * dt;
+  sampleRoute(f.route, f.pos, f.dir);
+  if (taxiLeaderAhead(sim, f, f.pos)) {   // 前方间隔不足：退回原位等待，本步不推进
+    f.route.d = prevD;
+    sampleRoute(f.route, f.pos, f.dir);
+    return false;
+  }
+  return f.route.d >= f.route.total;
+}
+
 function stepFlight(sim, f, dt) {
   switch (f.phase) {
     case "holding": {
@@ -194,7 +223,7 @@ function stepFlight(sim, f, dt) {
       }
       break;
     case "taxiIn":
-      if (advance(f, SPEED.taxiIn, dt)) {
+      if (advanceTaxi(sim, f, SPEED.taxiIn, dt)) {
         sim.stats.taxiInSum += sim.t - f.taxiStart; sim.stats.taxiInN++;
         f.phase = "atGate"; f.boardUntil = sim.t + f.turnaround;
         log(sim, f.callsign + " 停靠机位 " + (f.gate.i + 1));
@@ -215,7 +244,7 @@ function stepFlight(sim, f, dt) {
       }
       break;
     case "taxiOut":
-      if (advance(f, SPEED.taxiOut, dt)) {
+      if (advanceTaxi(sim, f, SPEED.taxiOut, dt)) {
         f.phase = "holdShort";
         const n = sim.flights.filter((o) => o !== f && o.phase === "holdShort" && o.outRwyKey === f.outRwyKey).length;
         f.pos.z += Math.min(n, 4) * 9;
@@ -284,6 +313,7 @@ return {
   AIRLINES, CITIES, PHASE_LABEL, PHASE_COLOR, SPEED, SEED, mulberry32,
   makeRoute, sampleRoute, approachRoute, landingRoute, taxiInRoute,
   pushbackRoute, taxiOutRoute, takeoffRoute, taxiInDist,
+  TAXI_SEP, taxiLeaderAhead, advanceTaxi,
   createSim, rwOpen, log, freeOpenRunways,
   pickLandingRunway, pickTakeoffRunway, pickGate, advance, stepFlight, stepSim, snapshotKpi,
 };

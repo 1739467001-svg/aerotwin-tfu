@@ -76,6 +76,37 @@ test("资源互斥不变量：全程跑道不双占、机位不超发、无锁�
   }
 });
 
+test("滑行道冲突检测：同车道同向跟随机始终保持 ≈TAXI_SEP 间隔、不叠合", () => {
+  const { V, makeRoute, advanceTaxi, TAXI_SEP } = S;
+  // 同一条 -x 直线滑行道：慢车在前、快车在后
+  const lead = { id: 1, phase: "taxiOut", pos: V(0, 0.7, -30), dir: V(-1, 0, 0), route: makeRoute([V(0, 0.7, -30), V(-200, 0.7, -30)]) };
+  const follow = { id: 2, phase: "taxiOut", pos: V(20, 0.7, -30), dir: V(-1, 0, 0), route: makeRoute([V(20, 0.7, -30), V(-200, 0.7, -30)]) };
+  const sim = { flights: [lead, follow] };
+  let minGap = Infinity;
+  for (let i = 0; i < 400; i++) {
+    advanceTaxi(sim, lead, 0.5, DT);   // 慢车在前
+    advanceTaxi(sim, follow, 2.0, DT); // 快车在后，必然追上
+    minGap = Math.min(minGap, follow.pos.distanceTo(lead.pos));
+  }
+  assert.ok(minGap >= TAXI_SEP - 1, `跟随机最小间距 ${minGap.toFixed(2)} 应 ≥ ${TAXI_SEP - 1}`);
+});
+
+test("汇入口防死锁：垂直/反向交汇不触发跟车阻塞，仅同向才阻塞", () => {
+  const { V, makeRoute, taxiLeaderAhead } = S;
+  const seg = (a, b) => makeRoute([a, b]);
+  const self = { id: 1, phase: "taxiIn", pos: V(0, 0.7, -50), dir: V(-1, 0, 0), route: seg(V(0, 0.7, -50), V(-50, 0.7, -50)) };
+  const at = self.pos;
+  // 垂直交汇（航向 +z）：虽在正前方近距，但不同向 → 不阻塞（否则汇入口会环形死锁）
+  const cross = { id: 2, phase: "taxiIn", pos: V(-5, 0.7, -50), dir: V(0, 0, 1), route: seg(V(-5, 0.7, -60), V(-5, 0.7, -40)) };
+  assert.equal(taxiLeaderAhead({ flights: [self, cross] }, self, at), false, "垂直交汇不应阻塞");
+  // 反向交汇（航向 +x）：不阻塞
+  const onc = { id: 3, phase: "taxiIn", pos: V(-5, 0.7, -50), dir: V(1, 0, 0), route: seg(V(-5, 0.7, -50), V(40, 0.7, -50)) };
+  assert.equal(taxiLeaderAhead({ flights: [self, onc] }, self, at), false, "反向交汇不应阻塞");
+  // 对照：同向、前方、近距 → 应阻塞
+  const ld = { id: 4, phase: "taxiIn", pos: V(-5, 0.7, -50), dir: V(-1, 0, 0), route: seg(V(-5, 0.7, -50), V(-50, 0.7, -50)) };
+  assert.equal(taxiLeaderAhead({ flights: [self, ld] }, self, at), true, "同向前方近距应阻塞");
+});
+
 test("falsy-0 回归：0 号航班能真正占用跑道与机位（occupiedBy 可为 0）", () => {
   const sim = createSim("smart");
   let f0 = null;
