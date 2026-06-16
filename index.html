@@ -964,7 +964,10 @@ function refreshUI() {
 }
 
 /* ------- 主循环 ------- */
-let last = performance.now(), uiTimer = 0;
+/* 固定步长推进：仿真与渲染帧率解耦，同种子结果在任意机器/帧率下可复现，
+   步长 < 0.5 仍能防止高倍速下航班「穿越」相位边界；不足一步的余量跨帧累计 */
+const SIM_STEP = 0.1;
+let last = performance.now(), uiTimer = 0, simAccum = 0;
 const tmpV = V(0, 0, 0);
 const label = $("label");
 
@@ -973,11 +976,12 @@ function loop(now) {
   const realDt = Math.min((now - last) / 1000, .1);
   last = now;
   if (!paused) {
-    const simDt = realDt * speed;
-    const steps = Math.ceil(simDt / .5);
-    for (let i = 0; i < steps; i++) {
-      stepSim(sims.fcfs, simDt / steps);
-      stepSim(sims.smart, simDt / steps);
+    simAccum += realDt * speed;
+    let guard = 1000;   // 防御性上限：realDt≤.1、speed≤60 时每帧实际仅数十步
+    while (simAccum >= SIM_STEP && guard-- > 0) {
+      stepSim(sims.fcfs, SIM_STEP);
+      stepSim(sims.smart, SIM_STEP);
+      simAccum -= SIM_STEP;
     }
   }
 
