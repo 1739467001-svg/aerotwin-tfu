@@ -448,6 +448,24 @@ function buildSky(scene) {
   return { skyU, clouds, cloudMat, sunBall, sunGlow, moon, moonGlow };
 }
 
+/* ------- 雷暴天气：雨幕（联动「⛈ 雷暴关闭 02R」按钮）------- */
+function buildStorm(scene) {
+  const N = 2600, RX = 360, RZ = 360, TOP = 230;
+  const pos = new Float32Array(N * 6), drops = [];
+  for (let i = 0; i < N; i++) {
+    const x = (Math.random() * 2 - 1) * RX, z = (Math.random() * 2 - 1) * RZ;
+    const y = Math.random() * TOP, len = 3 + Math.random() * 3, o = i * 6;
+    pos[o] = x; pos[o + 1] = y; pos[o + 2] = z;
+    pos[o + 3] = x + 0.7; pos[o + 4] = y + len; pos[o + 5] = z;   // 顶端略偏 → 风斜雨丝
+    drops.push({ o, speed: 95 + Math.random() * 70, len });
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  const rain = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xaec6ea, transparent: true, opacity: 0, depthWrite: false }));
+  rain.position.set(0, 0, -60); rain.frustumCulled = false; rain.visible = false; scene.add(rain);
+  return { rain, drops, TOP };
+}
+
 /* ------- 远景树丛（土地点缀） ------- */
 function buildTrees(scene, M) {
   const trunkMat = M.trunk = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: .9 });
@@ -564,6 +582,7 @@ scene.traverse((o) => {
     o.castShadow = o.geometry.type !== "PlaneGeometry";
   }
 });
+const storm = Object.assign(buildStorm(scene), { intensity: 0, flash: 0, flashTimer: 0, wet: false });
 const planesGroup = new THREE.Group(); scene.add(planesGroup);
 let meshById = new Map();
 let renderedView = view;
@@ -748,6 +767,58 @@ btnTheme.onclick = () => {
 };
 btnTheme.textContent = "🕐 自动昼夜";
 applyDaylight(6.0);
+
+/* ------- 雷暴可视化：在 applyDaylight 之上按强度叠加 阴云压暗 + 雨幕 + 闪电 + 湿地面 ------- */
+const STORM = {
+  fog: new THREE.Color(0x2a3038), top: new THREE.Color(0x33404e), hor: new THREE.Color(0x4b5662),
+  cloud: new THREE.Color(0x39424e), amb: new THREE.Color(0x8a93a0), flash: new THREE.Color(0xcdd6e3),
+};
+const wetKeys = ["ground", "runway", "taxi", "apron", "road", "pad"];
+function applyStorm(dt) {
+  const stormy = sims.smart.runways.B.closedUntil - sims.smart.t > 0;   // 跑道 02R 关闭 = 雷暴过境
+  storm.intensity += ((stormy ? 1 : 0) - storm.intensity) * Math.min(1, dt * 0.7);   // 数秒平滑起落
+  const k = storm.intensity;
+  if (k < 0.01) {
+    storm.rain.visible = false;
+    if (storm.wet) { for (const key of wetKeys) M[key].roughness = 0.95; storm.wet = false; }
+    return;
+  }
+  // 阴云压顶：压暗太阳/环境光、雨雾转浓转灰、天穹转灰、地面暖灯凸显
+  sun.intensity *= (1 - 0.78 * k);
+  ambient.intensity *= (1 - 0.22 * k);
+  ambient.color.lerp(STORM.amb, 0.5 * k);
+  scene.fog.density *= (1 + 3.2 * k);
+  scene.fog.color.lerp(STORM.fog, 0.72 * k);
+  sky.skyU.topColor.value.lerp(STORM.top, 0.72 * k);
+  sky.skyU.bottomColor.value.lerp(STORM.hor, 0.66 * k);
+  sky.cloudMat.color.lerp(STORM.cloud, 0.7 * k);
+  sky.cloudMat.opacity = Math.min(1, sky.cloudMat.opacity + 0.4 * k);
+  warm.intensity += 0.35 * k;
+  // 湿地面：跑道/滑行道/停机坪 变光滑压暗 → 湿亮反光感
+  for (const key of wetKeys) { M[key].roughness = 0.95 - 0.52 * k; M[key].color.multiplyScalar(1 - 0.3 * k); }
+  storm.wet = true;
+  // 闪电：强雷暴随机白闪、快速衰减，闪时全场骤亮（经 Bloom 炸开）
+  storm.flashTimer -= dt;
+  if (k > 0.45 && storm.flashTimer <= 0) { storm.flash = 1; storm.flashTimer = 2.2 + Math.random() * 5.5; }
+  storm.flash = Math.max(0, storm.flash - dt * 6);
+  const fl = storm.flash * k;
+  if (fl > 0.001) {
+    ambient.intensity += fl * 1.7; sun.intensity += fl * 0.9;
+    scene.fog.color.lerp(STORM.flash, fl * 0.6);
+    sky.skyU.topColor.value.lerp(STORM.flash, fl * 0.5); sky.skyU.bottomColor.value.lerp(STORM.flash, fl * 0.5);
+  }
+  scene.background.copy(scene.fog.color);
+  // 雨幕下落（用真实时间，雨速与仿真倍速解耦）
+  const arr = storm.rain.geometry.attributes.position.array;
+  for (const d of storm.drops) {
+    let y = arr[d.o + 1] - d.speed * dt;
+    if (y < 0) y += storm.TOP;
+    arr[d.o + 1] = y; arr[d.o + 4] = y + d.len;
+  }
+  storm.rain.geometry.attributes.position.needsUpdate = true;
+  storm.rain.material.opacity = 0.5 * k;
+  storm.rain.visible = true;
+}
 function setView(v) {
   view = v; selectedId = null;
   btnFcfs.className = v === "fcfs" ? "on-blue" : "";
@@ -876,6 +947,7 @@ function loop(now) {
   }
   const sim = sims[renderedView];
   applyDaylight(timeHour(((((sim.clockBase + sim.t) / 3600) % 24) + 24) % 24));
+  applyStorm(realDt);
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
