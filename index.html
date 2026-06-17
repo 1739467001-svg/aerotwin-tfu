@@ -26,7 +26,9 @@
   button.closed { border-color: var(--accent); color: var(--accent); animation: atPulse 1.2s infinite; }
   button:disabled { cursor: default; }
   @keyframes atPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-  #topbar { top: 14px; left: 14px; right: 14px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; z-index: 20; }
+  #topbar { top: 14px; left: 14px; right: 14px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; z-index: 20; transition: transform .3s ease, opacity .3s ease; }
+  #topbar.hidden { transform: translateY(-130%); opacity: 0; pointer-events: none; }
+  #btnBar { position: absolute; top: 4px; left: 50%; transform: translateX(-50%); z-index: 26; width: 50px; height: 20px; padding: 0; line-height: 1; display: flex; align-items: center; justify-content: center; font-size: 12px; border-radius: 0 0 9px 9px; background: var(--panel); border: 1px solid var(--border); border-top: none; backdrop-filter: blur(8px); }
   .logo { font-weight: 900; font-size: 15px; letter-spacing: 2px; white-space: nowrap; }
   .logo b { color: var(--accent); }
   .logo small { color: var(--dim); font-size: 11px; margin-left: 10px; font-weight: 400; }
@@ -91,7 +93,7 @@
   #camPanel { max-height: 240px; }
   .panel.collapsed { max-height: 42px !important; overflow: hidden !important; }
   @media (prefers-reduced-motion: reduce) {
-    #flightPanel, #kpiPanel, #logPanel, #camPanel, #topControls { transition: none; }
+    #flightPanel, #kpiPanel, #logPanel, #camPanel, #topControls, #topbar { transition: none; }
   }
 
   /* —— 平板 —— */
@@ -149,6 +151,7 @@
   <div id="clock">06:00:00</div>
   <button id="btnMenu" aria-label="菜单">☰</button>
 </div>
+<button id="btnBar" title="收起 / 展开控制台">▴</button>
 
 <div id="flightPanel" class="panel">
   <button class="pcollapse">▾</button>
@@ -1417,6 +1420,10 @@ function syncCamButtons() {
   btnFollow.classList.toggle("on", follow);
 }
 syncCamButtons();
+
+/* ------- 顶栏控制台：把手一键收起 / 展开整条控制栏 ------- */
+const btnBar = $("btnBar");
+btnBar.onclick = () => { btnBar.textContent = $("topbar").classList.toggle("hidden") ? "▾" : "▴"; };
 
 /* ------- 顶栏抽屉菜单（手机）：☰ 开合，选完任一控件即收起 ------- */
 $("btnMenu").onclick = () => $("topbar").classList.toggle("menu-open");
