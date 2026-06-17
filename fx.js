@@ -29,6 +29,8 @@
     tone:  { enabled: true, exposure: 1.0, invGamma: 0.9 },
     // 热浪扰动：屏幕带状折射（band=带中心屏幕Y、width=带半高、amount=最大偏移）
     heat:  { enabled: true, amount: 0.0022, band: 0.4, width: 0.26 },
+    // SSAO 环境光遮蔽（实验，默认关：盲调风险高，开启评估 AEROTWIN_FX.cfg.ssao.enabled=true）
+    ssao:  { enabled: false, radius: 0.7, strength: 1.1, bias: 0.03, scale: 2 },
   };
 
   const VERT = "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }";
@@ -67,6 +69,7 @@
     "uniform float bloomStrength; uniform float focusY; uniform float range; uniform float dofStrength;",
     "uniform int dofOn; uniform int bloomOn; uniform int toneOn; uniform float exposure; uniform float invGamma;",
     "uniform int heatOn; uniform float heatAmt; uniform float heatBand; uniform float heatWidth; uniform float time;",
+    "uniform sampler2D tAO; uniform int aoOn;",
     "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }",
     "void main(){",
     "  vec2 uv = vUv;",
@@ -83,6 +86,7 @@
     "    coc = pow(coc, 1.3) * dofStrength;",
     "    col = mix(col, blurd, coc);",
     "  }",
+    "  if (aoOn == 1) col *= texture2D(tAO, vUv).r;",
     "  if (bloomOn == 1) { col += texture2D(tBloom, uv).rgb * bloomStrength; }",
     "  if (toneOn == 1) { col *= exposure; col = aces(col); col = pow(col, vec3(invGamma)); }",
     "  gl_FragColor = vec4(col, 1.0);",
@@ -111,6 +115,28 @@
     "  vec3 rgbB = rgbA*0.5 + 0.25*(texture2D(tDiffuse, vUv + dir*(-0.5)).rgb + texture2D(tDiffuse, vUv + dir*(0.5)).rgb);",
     "  float lB = dot(rgbB, luma);",
     "  gl_FragColor = vec4((lB < lMin || lB > lMax) ? rgbA : rgbB, 1.0);",
+    "}",
+  ].join("\n");
+
+  /* SSAO（实验/默认关）：由深度纹理近似环境光遮蔽，螺旋采样 + 深度差占用估计 */
+  const FRAG_SSAO = [
+    "varying vec2 vUv; uniform sampler2D tDepth; uniform vec2 texel;",
+    "uniform float near; uniform float far; uniform float radius; uniform float strength; uniform float bias;",
+    "float lz(vec2 uv){ float z = texture2D(tDepth, uv).x; float d = z*2.0-1.0; return (2.0*near*far)/(far+near - d*(far-near)); }",
+    "float hash(vec2 p){ return fract(sin(dot(p, vec2(41.3,289.1)))*43758.5453); }",
+    "void main(){",
+    "  float c = lz(vUv);",
+    "  if (c >= far*0.985) { gl_FragColor = vec4(1.0); return; }",
+    "  float ang = hash(vUv)*6.2831, ca = cos(ang), sa = sin(ang);",
+    "  float rad = radius / max(c*0.06, 1.0), occ = 0.0;",
+    "  for (int i=0;i<8;i++){",
+    "    float fi = (float(i)+0.5)/8.0, a = fi*6.2831;",
+    "    vec2 k = vec2(cos(a), sin(a)) * fi * rad;",
+    "    vec2 o = vec2(k.x*ca - k.y*sa, k.x*sa + k.y*ca) * texel * 300.0;",
+    "    float dz = c - lz(vUv + o);",
+    "    if (dz > bias && dz < radius*4.0) occ += 1.0 - dz/(radius*4.0);",
+    "  }",
+    "  gl_FragColor = vec4(vec3(clamp(1.0 - (occ/8.0)*strength, 0.0, 1.0)), 1.0);",
     "}",
   ].join("\n");
 
@@ -143,8 +169,10 @@
       dofOn: { value: cfg.dof.enabled ? 1 : 0 }, bloomOn: { value: cfg.bloom.enabled ? 1 : 0 },
       toneOn: { value: cfg.tone.enabled ? 1 : 0 }, exposure: { value: cfg.tone.exposure }, invGamma: { value: cfg.tone.invGamma },
       heatOn: { value: cfg.heat.enabled ? 1 : 0 }, heatAmt: { value: cfg.heat.amount }, heatBand: { value: cfg.heat.band }, heatWidth: { value: cfg.heat.width }, time: { value: 0 },
+      tAO: { value: null }, aoOn: { value: cfg.ssao.enabled ? 1 : 0 },
     });
     const mFxaa   = shader(FRAG_FXAA,   { tDiffuse: { value: null }, texel: { value: new THREE.Vector2() } });
+    const mSSAO   = shader(FRAG_SSAO,   { tDepth: { value: null }, texel: { value: new THREE.Vector2() }, near: { value: 1 }, far: { value: 3000 }, radius: { value: cfg.ssao.radius }, strength: { value: cfg.ssao.strength }, bias: { value: cfg.ssao.bias } });
     const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mCopy);
     fsQuad.frustumCulled = false;
     fsScene.add(fsQuad);
@@ -155,17 +183,20 @@
       depthBuffer: !!depth, stencilBuffer: false,
     });
 
-    let rtScene, rtFinal, dofA, dofB, bloomA, bloomB, W = 1, H = 1;
-    function dispose() { [rtScene, rtFinal, dofA, dofB, bloomA, bloomB].forEach((rt) => rt && rt.dispose()); }
+    let rtScene, rtFinal, dofA, dofB, bloomA, bloomB, ssaoA, ssaoB, W = 1, H = 1;
+    function dispose() { [rtScene, rtFinal, dofA, dofB, bloomA, bloomB, ssaoA, ssaoB].forEach((rt) => rt && rt.dispose()); }
     function setSize(w, h) {
       W = Math.max(1, w | 0); H = Math.max(1, h | 0);
       dispose();
       rtScene = makeRT(W, H, true);
+      rtScene.depthTexture = new THREE.DepthTexture(W, H);   // 供 SSAO 采样深度
       rtFinal = makeRT(W, H, false);
       dofA = makeRT(W / cfg.dof.scale, H / cfg.dof.scale, false);
       dofB = makeRT(W / cfg.dof.scale, H / cfg.dof.scale, false);
       bloomA = makeRT(W / cfg.bloom.scale, H / cfg.bloom.scale, false);
       bloomB = makeRT(W / cfg.bloom.scale, H / cfg.bloom.scale, false);
+      ssaoA = makeRT(W / cfg.ssao.scale, H / cfg.ssao.scale, false);
+      ssaoB = makeRT(W / cfg.ssao.scale, H / cfg.ssao.scale, false);
     }
 
     const draw = (mat, target) => { fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); };
@@ -193,9 +224,20 @@
         bloomTex = blur(bloomA.texture, bloomB, bloomA, cfg.bloom.radius, cfg.bloom.iterations);
       }
 
+      let aoTex = null;
+      if (cfg.ssao.enabled) {                                                // ③′ SSAO（深度 → 遮蔽 → 轻模糊去噪）
+        mSSAO.uniforms.tDepth.value = rtScene.depthTexture;
+        mSSAO.uniforms.texel.value.set(1 / W, 1 / H);
+        mSSAO.uniforms.near.value = camera.near; mSSAO.uniforms.far.value = camera.far;
+        draw(mSSAO, ssaoA);
+        aoTex = blur(ssaoA.texture, ssaoB, ssaoA, 1.0, 1);
+      }
+
       mComp.uniforms.tScene.value = rtScene.texture;                         // ④ 合成
       mComp.uniforms.tSceneBlur.value = sceneBlurTex;
       mComp.uniforms.tBloom.value = bloomTex;
+      mComp.uniforms.tAO.value = aoTex || rtScene.texture;
+      mComp.uniforms.aoOn.value = aoTex ? 1 : 0;
       mComp.uniforms.time.value = performance.now() * 0.001;
       draw(mComp, cfg.fxaa.enabled ? rtFinal : null);
 
@@ -224,6 +266,9 @@
       mComp.uniforms.heatAmt.value = cfg.heat.amount;
       mComp.uniforms.heatBand.value = cfg.heat.band;
       mComp.uniforms.heatWidth.value = cfg.heat.width;
+      mSSAO.uniforms.radius.value = cfg.ssao.radius;
+      mSSAO.uniforms.strength.value = cfg.ssao.strength;
+      mSSAO.uniforms.bias.value = cfg.ssao.bias;
     }
 
     return { render, setSize, dispose, apply, cfg };
