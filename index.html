@@ -685,6 +685,72 @@ function buildApronLife(scene) {
   };
 }
 
+/* ------- 机坪 & 进近灯光：高杆泛光灯 / PAPI / 跑道标线 / 顺序闪灯（兔子灯）/ 风向袋 ------- */
+function runwayNumTexture(name) {
+  const cv = document.createElement("canvas"); cv.width = 128; cv.height = 96;
+  const c = cv.getContext("2d");
+  c.fillStyle = "#e8eef6"; c.font = "bold 60px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillText(name, 64, 52);
+  return new THREE.CanvasTexture(cv);
+}
+function buildAirfieldLights(scene) {
+  const matMark = new THREE.MeshBasicMaterial({ color: 0xe8eef6 });
+  const matPole = new THREE.MeshStandardMaterial({ color: 0x3a4456, roughness: .7, metalness: .3 });
+  const matLamp = new THREE.MeshBasicMaterial({ color: 0xfff0cf });
+  const matWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const matRed = new THREE.MeshBasicMaterial({ color: 0xff3b30 });
+  const matFlash = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const flashers = [];
+  const mark = (w, d, x, z) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), matMark); m.rotation.x = -Math.PI / 2; m.position.set(x, .06, z); scene.add(m); };
+
+  // 高杆泛光灯（机坪 / 航站楼周边）—— 灯头经 Bloom 夜间发光，又给平场加竖向层次
+  for (const [x, z] of [[-140, -33], [-70, -33], [0, -33], [70, -33], [140, -33], [-150, 8], [150, 8]]) {
+    const g = new THREE.Group(); g.position.set(x, 0, z);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(.4, .55, 17, 8), matPole); pole.position.y = 8.5; g.add(pole);
+    const headBar = new THREE.Mesh(new THREE.BoxGeometry(4.2, .8, 1.4), matPole); headBar.position.y = 17; g.add(headBar);
+    for (const lx of [-1.4, 0, 1.4]) { const l = new THREE.Mesh(new THREE.SphereGeometry(.5, 8, 8), matLamp); l.position.set(lx, 16.7, .35); g.add(l); }
+    scene.add(g);
+  }
+
+  // 每条跑道：阈值斑马线 + 跑道号 + 接地带 + PAPI + 顺序闪灯
+  for (const k of ["A", "B"]) {
+    const z = RWY[k].z, name = RWY[k].name;
+    for (let s = -3; s <= 3; s++) if (s !== 0) mark(3.2, 0.9, -179, z + s * 1.4);              // 阈值"钢琴键"
+    const num = new THREE.Mesh(new THREE.PlaneGeometry(10, 7), new THREE.MeshBasicMaterial({ map: runwayNumTexture(name), transparent: true }));
+    num.rotation.x = -Math.PI / 2; num.rotation.z = -Math.PI / 2; num.position.set(-165, .07, z); scene.add(num);  // 跑道号
+    for (const tx of [-150, -120]) { mark(7, 1.0, tx, z - 2.0); mark(7, 1.0, tx, z + 2.0); }     // 接地带 / 瞄准点
+    for (let p = 0; p < 4; p++) { const l = new THREE.Mesh(new THREE.SphereGeometry(.5, 8, 8), p < 2 ? matWhite : matRed); l.position.set(-184, .6, z - 9 + p * 1.6); scene.add(l); }  // PAPI
+    const row = [];
+    for (let x = -262; x <= -192; x += 9) { const l = new THREE.Mesh(new THREE.SphereGeometry(.55, 8, 8), matFlash); l.position.set(x, .5, z); l.visible = false; scene.add(l); row.push(l); }
+    flashers.push(row);
+  }
+
+  // 风向袋
+  const sock = { x: -150, z: -110 };
+  const sockPole = new THREE.Mesh(new THREE.CylinderGeometry(.25, .3, 9, 8), matPole); sockPole.position.set(sock.x, 4.5, sock.z); scene.add(sockPole);
+  const sockPivot = new THREE.Group(); sockPivot.position.set(sock.x, 8.8, sock.z); scene.add(sockPivot);
+  const sockMats = [new THREE.MeshBasicMaterial({ color: 0xff7a3c }), new THREE.MeshBasicMaterial({ color: 0xf2e9c0 })];
+  for (let s = 0; s < 5; s++) {
+    const r1 = Math.max(0.12, 0.85 - s * 0.13), r2 = Math.max(0.1, 0.85 - (s + 1) * 0.13);
+    const seg = new THREE.Mesh(new THREE.CylinderGeometry(r2, r1, 1.4, 10, 1, true), sockMats[s % 2]);
+    seg.rotation.z = -Math.PI / 2; seg.position.x = 0.7 + s * 1.4; sockPivot.add(seg);
+  }
+
+  let t = 0;
+  return {
+    update(dt, stormK) {
+      t += dt;
+      for (const row of flashers) {                       // 兔子灯：脉冲自远向阈值奔跑
+        const n = row.length, head = ((t / 0.6) % 1) * (n + 4) - 2;
+        for (let i = 0; i < n; i++) row[i].visible = Math.abs(i - head) < 1.2;
+      }
+      const wind = Math.min(1, 0.45 + stormK * 0.6);        // 风向袋：常风半垂，雷暴吹挺并抖动
+      sockPivot.rotation.y = 0.7 + Math.sin(t * 0.4) * 0.22;
+      sockPivot.rotation.z = -1.05 * (1 - wind) - Math.abs(Math.sin(t * (2.2 + stormK * 5))) * 0.12 * wind - 0.05;
+    },
+  };
+}
+
 /* ============================================================
    应用入口
    ============================================================ */
@@ -728,6 +794,7 @@ buildTrees(scene, M);
 const buses = buildBuses(scene);
 const people = buildPeople(scene);
 const apron = buildApronLife(scene);
+const airfield = buildAirfieldLights(scene);
 /* 阴影分工：所有标准材质实体「接收」阴影；只有立体几何（航站楼/塔台/树/车/人）「投射」，
    平铺的地面/跑道/滑行道/机位（PlaneGeometry）只接收不投射 —— 避免共面平面自投影产生暗纹。
    灯点(Points)、标线/玻璃(MeshBasic)、天空穹顶(Shader)不参与 */
@@ -1159,6 +1226,7 @@ function loop(now) {
   updateCamera(realDt);
   contrails.update(realDt);
   apron.update(sim, realDt);
+  airfield.update(realDt, storm.intensity);
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
