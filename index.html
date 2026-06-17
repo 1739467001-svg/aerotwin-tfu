@@ -488,6 +488,9 @@ function buildSky(scene) {
   const moon = new THREE.Mesh(new THREE.SphereGeometry(13, 16, 16), new THREE.MeshBasicMaterial({ color: 0xe6edf9, fog: false }));
   moon.position.copy(moonGlow.position); scene.add(moon);
 
+  // 天空类对象额外置于图层 1：供湿地面反射用的 CubeCamera 单独取景（不影响主相机）
+  dome.layers.enable(1); clouds.traverse((o) => o.layers.enable(1));
+  for (const o of [sunGlow, sunBall, moonGlow, moon]) o.layers.enable(1);
   return { skyU, clouds, cloudMat, sunBall, sunGlow, moon, moonGlow };
 }
 
@@ -919,6 +922,13 @@ const sky = buildSky(scene);
 // 玻璃幕墙复用 sky 的颜色对象 → 反射随昼夜/雷暴实时变化（applyDaylight 原地改色即生效）
 M.curtain.uniforms.skyTop.value = sky.skyU.topColor.value;
 M.curtain.uniforms.skyHor.value = sky.skyU.bottomColor.value;
+/* 湿地面镜面反射：天空专用 CubeCamera（只取图层 1 的天穹/日月/云星）+ 路面 envMap，
+   雨天经 applyStorm 抬高 envMapIntensity 并降糙显现；干燥时强度 0、且不更新，零开销 */
+stars.layers.enable(1);
+const wetEnvRT = new THREE.WebGLCubeRenderTarget(128, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+const wetEnvCam = new THREE.CubeCamera(1, 2200, wetEnvRT);
+wetEnvCam.position.set(0, 6, -60); wetEnvCam.layers.set(1); scene.add(wetEnvCam);
+for (const key of ["ground", "runway", "taxi", "apron", "road", "pad"]) { M[key].envMap = wetEnvRT.texture; M[key].envMapIntensity = 0; M[key].needsUpdate = true; }
 buildTrees(scene, M);
 const buses = buildBuses(scene);
 const people = buildPeople(scene);
@@ -1172,7 +1182,7 @@ function applyStorm(dt) {
   const k = storm.intensity;
   if (k < 0.01) {
     storm.rain.visible = false;
-    if (storm.wet) { for (const key of wetKeys) M[key].roughness = 0.95; storm.wet = false; }
+    if (storm.wet) { for (const key of wetKeys) { M[key].roughness = 0.95; M[key].metalness = 0; M[key].envMapIntensity = 0; } storm.wet = false; }
     return;
   }
   // 阴云压顶：压暗太阳/环境光、雨雾转浓转灰、天穹转灰、地面暖灯凸显
@@ -1187,7 +1197,7 @@ function applyStorm(dt) {
   sky.cloudMat.opacity = Math.min(1, sky.cloudMat.opacity + 0.4 * k);
   warm.intensity += 0.35 * k;
   // 湿地面：跑道/滑行道/停机坪 变光滑压暗 → 湿亮反光感
-  for (const key of wetKeys) { M[key].roughness = 0.95 - 0.52 * k; M[key].color.multiplyScalar(1 - 0.3 * k); }
+  for (const key of wetKeys) { M[key].roughness = 0.95 - 0.55 * k; M[key].metalness = 0.45 * k; M[key].envMapIntensity = 0.9 * k; M[key].color.multiplyScalar(1 - 0.3 * k); }
   storm.wet = true;
   // 闪电：强雷暴随机白闪、快速衰减，闪时全场骤亮（经 Bloom 炸开）
   storm.flashTimer -= dt;
@@ -1331,7 +1341,7 @@ function refreshUI() {
 /* 固定步长推进：仿真与渲染帧率解耦，同种子结果在任意机器/帧率下可复现，
    步长 < 0.5 仍能防止高倍速下航班「穿越」相位边界；不足一步的余量跨帧累计 */
 const SIM_STEP = 0.1;
-let last = performance.now(), uiTimer = 0, simAccum = 0;
+let last = performance.now(), uiTimer = 0, simAccum = 0, frameN = 0;
 const tmpV = new THREE.Vector3(0, 0, 0);
 const label = $("label");
 
@@ -1442,6 +1452,9 @@ function loop(now) {
       label.textContent = sf.callsign;
     } else label.style.display = "none";
   } else label.style.display = "none";
+
+  // 仅雨天、且每 8 帧刷新一次天空反射立方图（干燥零开销）
+  if (storm.intensity > 0.03 && frameN++ % 8 === 0) wetEnvCam.update(renderer, scene);
 
   if (fxOk) {
     try { fx.render(); }
