@@ -1560,13 +1560,21 @@ function loop(now) {
       planesGroup.add(m); meshById.set(f.id, m);
     }
     m.position.copy(f.pos);
+    m.rotation.order = "YZX";   // 偏航(Y)→俯仰(Z)→滚转(X)，使坡度绕机身纵轴
     const d = f.backward ? tmpV.copy(f.dir).negate() : f.dir;
     const targetYaw = Math.atan2(-d.z, d.x);
     let dy = targetYaw - m.rotation.y;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
-    m.rotation.y += dy * Math.min(1, realDt * 6);
-    m.rotation.z = Math.atan2(d.y, Math.hypot(d.x, d.z)) * .8;
+    const yawStep = dy * Math.min(1, realDt * 6);
+    m.rotation.y += yawStep;
+    // 平滑俯仰：抬前轮 / 接地拉飘的渐变感（不再瞬切到爬升/下降角）
+    const targetPitch = Math.atan2(d.y, Math.hypot(d.x, d.z)) * .85;
+    m.rotation.z += (targetPitch - m.rotation.z) * Math.min(1, realDt * 3);
+    // 转弯压坡度：仅空中（y>3）按偏航角速度倾侧，地面滑行保持机翼水平（BANK_SIGN 决定内/外侧，正负可调）
+    const tgtBank = f.pos.y > 3 ? Math.max(-0.45, Math.min(0.45, (yawStep / Math.max(realDt, 1e-3)) * 1.6)) : 0;
+    m.userData.bank = (m.userData.bank || 0) + (tgtBank - (m.userData.bank || 0)) * Math.min(1, realDt * 3);
+    m.rotation.x = m.userData.bank;
     const fxp = m.userData.fx;
     if (fxp) {
       const tt = now * 0.001, ph = f.phase;
