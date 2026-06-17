@@ -31,6 +31,8 @@
     heat:  { enabled: true, amount: 0.0022, band: 0.4, width: 0.26 },
     // SSAO 环境光遮蔽（实验，默认关：盲调风险高，开启评估 AEROTWIN_FX.cfg.ssao.enabled=true）
     ssao:  { enabled: false, radius: 0.7, strength: 1.1, bias: 0.03, scale: 2 },
+    // 太阳光柱（径向光晕，仅太阳在画面且地平线之上时显现；复用泛光亮度缓冲）
+    godray:{ enabled: true, density: 0.92, decay: 0.95, weight: 0.06, strength: 0.7 },
   };
 
   const VERT = "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }";
@@ -70,6 +72,7 @@
     "uniform int dofOn; uniform int bloomOn; uniform int toneOn; uniform float exposure; uniform float invGamma;",
     "uniform int heatOn; uniform float heatAmt; uniform float heatBand; uniform float heatWidth; uniform float time;",
     "uniform sampler2D tAO; uniform int aoOn;",
+    "uniform sampler2D tGR; uniform int grOn; uniform float grStrength;",
     "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }",
     "void main(){",
     "  vec2 uv = vUv;",
@@ -88,6 +91,7 @@
     "  }",
     "  if (aoOn == 1) col *= texture2D(tAO, vUv).r;",
     "  if (bloomOn == 1) { col += texture2D(tBloom, uv).rgb * bloomStrength; }",
+    "  if (grOn == 1) { col += texture2D(tGR, uv).rgb * grStrength; }",
     "  if (toneOn == 1) { col *= exposure; col = aces(col); col = pow(col, vec3(invGamma)); }",
     "  gl_FragColor = vec4(col, 1.0);",
     "}",
@@ -140,6 +144,17 @@
     "}",
   ].join("\n");
 
+  /* 太阳光柱：从像素沿径向朝太阳屏幕位置步进、对泛光亮度缓冲衰减累加 */
+  const FRAG_GODRAY = [
+    "varying vec2 vUv; uniform sampler2D tBright; uniform vec2 sunUV; uniform float density; uniform float decay; uniform float weight;",
+    "void main(){",
+    "  vec2 dir = (vUv - sunUV) * (density / 24.0);",
+    "  vec2 uv = vUv; float illum = 1.0; vec3 acc = vec3(0.0);",
+    "  for (int i = 0; i < 24; i++) { uv -= dir; acc += texture2D(tBright, uv).rgb * illum; illum *= decay; }",
+    "  gl_FragColor = vec4(acc * weight, 1.0);",
+    "}",
+  ].join("\n");
+
   function deepMerge(base, over) {
     const out = {};
     for (const k in base) {
@@ -170,9 +185,12 @@
       toneOn: { value: cfg.tone.enabled ? 1 : 0 }, exposure: { value: cfg.tone.exposure }, invGamma: { value: cfg.tone.invGamma },
       heatOn: { value: cfg.heat.enabled ? 1 : 0 }, heatAmt: { value: cfg.heat.amount }, heatBand: { value: cfg.heat.band }, heatWidth: { value: cfg.heat.width }, time: { value: 0 },
       tAO: { value: null }, aoOn: { value: cfg.ssao.enabled ? 1 : 0 },
+      tGR: { value: null }, grOn: { value: 0 }, grStrength: { value: cfg.godray.strength },
     });
     const mFxaa   = shader(FRAG_FXAA,   { tDiffuse: { value: null }, texel: { value: new THREE.Vector2() } });
     const mSSAO   = shader(FRAG_SSAO,   { tDepth: { value: null }, texel: { value: new THREE.Vector2() }, near: { value: 1 }, far: { value: 3000 }, radius: { value: cfg.ssao.radius }, strength: { value: cfg.ssao.strength }, bias: { value: cfg.ssao.bias } });
+    const mGodray = shader(FRAG_GODRAY, { tBright: { value: null }, sunUV: { value: new THREE.Vector2(0.5, 0.5) }, density: { value: cfg.godray.density }, decay: { value: cfg.godray.decay }, weight: { value: cfg.godray.weight } });
+    let grSunX = 0.5, grSunY = 0.5, grSunOn = 0;   // 由 setSun() 每帧喂入太阳屏幕位置/可见性
     const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mCopy);
     fsQuad.frustumCulled = false;
     fsScene.add(fsQuad);
@@ -183,8 +201,8 @@
       depthBuffer: !!depth, stencilBuffer: false,
     });
 
-    let rtScene, rtFinal, dofA, dofB, bloomA, bloomB, ssaoA, ssaoB, W = 1, H = 1;
-    function dispose() { [rtScene, rtFinal, dofA, dofB, bloomA, bloomB, ssaoA, ssaoB].forEach((rt) => rt && rt.dispose()); }
+    let rtScene, rtFinal, dofA, dofB, bloomA, bloomB, ssaoA, ssaoB, gr, W = 1, H = 1;
+    function dispose() { [rtScene, rtFinal, dofA, dofB, bloomA, bloomB, ssaoA, ssaoB, gr].forEach((rt) => rt && rt.dispose()); }
     function setSize(w, h) {
       W = Math.max(1, w | 0); H = Math.max(1, h | 0);
       dispose();
@@ -197,6 +215,7 @@
       bloomB = makeRT(W / cfg.bloom.scale, H / cfg.bloom.scale, false);
       ssaoA = makeRT(W / cfg.ssao.scale, H / cfg.ssao.scale, false);
       ssaoB = makeRT(W / cfg.ssao.scale, H / cfg.ssao.scale, false);
+      gr = makeRT(W / cfg.bloom.scale, H / cfg.bloom.scale, false);
     }
 
     const draw = (mat, target) => { fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); };
@@ -233,11 +252,20 @@
         aoTex = blur(ssaoA.texture, ssaoB, ssaoA, 1.0, 1);
       }
 
+      let grTex = null;
+      if (cfg.godray.enabled && grSunOn && cfg.bloom.enabled) {              // ③″ 太阳光柱（径向模糊泛光缓冲）
+        mGodray.uniforms.tBright.value = bloomTex;
+        mGodray.uniforms.sunUV.value.set(grSunX, grSunY);
+        draw(mGodray, gr); grTex = gr.texture;
+      }
+
       mComp.uniforms.tScene.value = rtScene.texture;                         // ④ 合成
       mComp.uniforms.tSceneBlur.value = sceneBlurTex;
       mComp.uniforms.tBloom.value = bloomTex;
       mComp.uniforms.tAO.value = aoTex || rtScene.texture;
       mComp.uniforms.aoOn.value = aoTex ? 1 : 0;
+      mComp.uniforms.tGR.value = grTex || rtScene.texture;
+      mComp.uniforms.grOn.value = grTex ? 1 : 0;
       mComp.uniforms.time.value = performance.now() * 0.001;
       draw(mComp, cfg.fxaa.enabled ? rtFinal : null);
 
@@ -269,9 +297,14 @@
       mSSAO.uniforms.radius.value = cfg.ssao.radius;
       mSSAO.uniforms.strength.value = cfg.ssao.strength;
       mSSAO.uniforms.bias.value = cfg.ssao.bias;
+      mGodray.uniforms.density.value = cfg.godray.density;
+      mGodray.uniforms.decay.value = cfg.godray.decay;
+      mGodray.uniforms.weight.value = cfg.godray.weight;
+      mComp.uniforms.grStrength.value = cfg.godray.strength;
     }
+    function setSun(x, y, on) { grSunX = x; grSunY = y; grSunOn = on; }
 
-    return { render, setSize, dispose, apply, cfg };
+    return { render, setSize, dispose, apply, setSun, cfg };
   }
 
   global.AeroFX = { createFX };

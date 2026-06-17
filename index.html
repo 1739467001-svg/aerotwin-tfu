@@ -1516,6 +1516,7 @@ function refreshUI() {
 const SIM_STEP = 0.1;
 let last = performance.now(), uiTimer = 0, simAccum = 0, frameN = 0;
 const tmpV = new THREE.Vector3(0, 0, 0);
+const sunProj = new THREE.Vector3();
 const label = $("label");
 
 function loop(now) {
@@ -1546,6 +1547,10 @@ function loop(now) {
   airfield.update(realDt, storm.intensity);
   distant.update(realDt);
   aerial.update(realDt, smoothstep(-0.05, 0.18, sd.y));
+  if (fx && fx.setSun) {   // 太阳光柱：喂入太阳屏幕位置 + 可见性（在画面内且地平线之上）
+    sunProj.copy(sky.sunBall.position).project(camera);
+    fx.setSun(sunProj.x * 0.5 + 0.5, sunProj.y * 0.5 + 0.5, (sunProj.z < 1 && sd.y > 0.02) ? 1 : 0);
+  }
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
