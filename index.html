@@ -819,6 +819,58 @@ function buildDistant(scene) {
   };
 }
 
+/* ------- 空中点缀：白天飞鸟群（盘旋拍翼）+ 高空盘旋直升机 ------- */
+function buildAerial(scene) {
+  // 飞鸟群
+  const birdMat = new THREE.MeshBasicMaterial({ color: 0x2a3040, transparent: true, opacity: .9, side: THREE.DoubleSide });
+  const wingGeo = new THREE.BoxGeometry(2.4, .08, .7);
+  const flock = new THREE.Group(); flock.position.set(-260, 150, -180); scene.add(flock);
+  const birds = [];
+  for (let i = 0; i < 14; i++) {
+    const b = new THREE.Group();
+    const wl = new THREE.Mesh(wingGeo, birdMat), wr = new THREE.Mesh(wingGeo, birdMat);
+    wl.position.x = -1.2; wr.position.x = 1.2; b.add(wl); b.add(wr);
+    b.userData = { wl, wr, ang: Math.random() * 6.28, rad: 26 + Math.random() * 56, h: (Math.random() - .5) * 18, sp: .2 + Math.random() * .25, flap: Math.random() * 6.28 };
+    flock.add(b); birds.push(b);
+  }
+  // 盘旋直升机
+  const mBody = new THREE.MeshStandardMaterial({ color: 0x2e6da4, roughness: .5, metalness: .4 });
+  const mDark = new THREE.MeshStandardMaterial({ color: 0x222831, roughness: .7 });
+  const heli = new THREE.Group(); heli.scale.setScalar(1.4); scene.add(heli);
+  heli.add(new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.0, 2.0), mBody));
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(4.6, .6, .6), mBody); tail.position.set(-4.3, .4, 0); heli.add(tail);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(.5, 1.4, .5), mBody); fin.position.set(-6.3, .9, 0); heli.add(fin);
+  const rotor = new THREE.Group(); rotor.position.set(.4, 1.4, 0); heli.add(rotor);
+  for (let r = 0; r < 2; r++) { const bl = new THREE.Mesh(new THREE.BoxGeometry(11, .08, .5), mDark); bl.rotation.y = r * Math.PI / 2; rotor.add(bl); }
+  const trotor = new THREE.Group(); trotor.position.set(-6.3, .9, .4); heli.add(trotor);
+  for (let r = 0; r < 2; r++) { const bl = new THREE.Mesh(new THREE.BoxGeometry(.08, 2.4, .3), mDark); bl.rotation.z = r * Math.PI / 2; trotor.add(bl); }
+  for (const sz of [-0.8, 0.8]) { const sk = new THREE.Mesh(new THREE.BoxGeometry(3.6, .12, .12), mDark); sk.position.set(0, -1.2, sz); heli.add(sk); }
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(.3, 6, 6), new THREE.MeshBasicMaterial({ color: 0xff3b30 })); beacon.position.set(0, -1.0, 0); heli.add(beacon);
+  const hs = { ang: 0, rad: 300, h: 115, sp: .12 };
+
+  let t = 0;
+  return {
+    update(dt, dayF) {
+      t += dt;
+      // 飞鸟：整群缓旋 + 个体盘旋、拍翼、起伏；白天可见
+      flock.rotation.y += dt * .05;
+      for (const b of birds) {
+        const u = b.userData; u.ang += dt * u.sp; u.flap += dt * 8;
+        b.position.set(Math.cos(u.ang) * u.rad, u.h + Math.sin(u.ang * 2) * 3, Math.sin(u.ang) * u.rad);
+        b.rotation.y = -u.ang + Math.PI / 2;
+        const fl = Math.sin(u.flap) * .5; u.wl.rotation.z = fl; u.wr.rotation.z = -fl;
+      }
+      birdMat.opacity = .9 * dayF; flock.visible = dayF > .02;
+      // 直升机：高空缓慢盘旋，旋翼转动，信标闪烁
+      hs.ang += dt * hs.sp;
+      heli.position.set(Math.cos(hs.ang) * hs.rad - 20, hs.h, Math.sin(hs.ang) * hs.rad - 120);
+      heli.rotation.y = -hs.ang;
+      rotor.rotation.y += dt * 22; trotor.rotation.x += dt * 30;
+      beacon.visible = Math.sin(t * 6) > .3;
+    },
+  };
+}
+
 /* ============================================================
    应用入口
    ============================================================ */
@@ -874,6 +926,7 @@ scene.traverse((o) => {
 });
 const storm = Object.assign(buildStorm(scene), { intensity: 0, flash: 0, flashTimer: 0, wet: false });
 const distant = buildDistant(scene);
+const aerial = buildAerial(scene);
 const contrails = buildContrails(scene);
 const planesGroup = new THREE.Group(); scene.add(planesGroup);
 let meshById = new Map();
@@ -1298,6 +1351,7 @@ function loop(now) {
   apron.update(sim, realDt);
   airfield.update(realDt, storm.intensity);
   distant.update(realDt);
+  aerial.update(realDt, smoothstep(-0.05, 0.18, sd.y));
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
