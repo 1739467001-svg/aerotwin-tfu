@@ -751,6 +751,74 @@ function buildAirfieldLights(scene) {
   };
 }
 
+/* ------- 天际线与远景：远山 / 城市天际线（夜窗）/ 停车场 / 旗杆 / 塔台雷达 ------- */
+function cityWindowsTexture() {
+  const cv = document.createElement("canvas"); cv.width = 64; cv.height = 128;
+  const c = cv.getContext("2d");
+  c.fillStyle = "#000"; c.fillRect(0, 0, 64, 128);
+  c.fillStyle = "#ffd98a";
+  for (let y = 6; y < 128; y += 9) for (let x = 5; x < 64; x += 9) if (Math.random() > 0.38) c.fillRect(x, y, 5, 6);
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 6); return t;
+}
+function buildDistant(scene) {
+  // 远山轮廓（环绕一圈，受雾色融入地平线）
+  const mtnMat = new THREE.MeshStandardMaterial({ color: 0x2b3650, roughness: 1, metalness: 0 });
+  for (let i = 0; i < 60; i++) {
+    const a = (i / 60) * Math.PI * 2, r = 800 + (Math.random() - 0.5) * 130;
+    const h = 70 + Math.random() * 120, w = 95 + Math.random() * 120;
+    const m = new THREE.Mesh(new THREE.ConeGeometry(w, h, 4), mtnMat);
+    m.position.set(Math.sin(a) * r, h / 2 - 12, Math.cos(a) * r); m.rotation.y = Math.random() * Math.PI;
+    scene.add(m);
+  }
+  // 城市天际线（airfield 之外北侧远景，夜间亮窗）
+  const winMat = new THREE.MeshStandardMaterial({ color: 0x1a2336, roughness: .85, emissive: 0xffd98a, emissiveMap: cityWindowsTexture(), emissiveIntensity: 0.05 });
+  for (let i = 0; i < 44; i++) {
+    const bw = 14 + Math.random() * 22, bh = 50 + Math.random() * 150, bd = 14 + Math.random() * 22;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), winMat);
+    m.position.set(-40 + (Math.random() - 0.5) * 640, bh / 2, -700 + (Math.random() - 0.5) * 180);
+    scene.add(m);
+  }
+  // 停车场车阵（陆侧前景）
+  const carGeo = new THREE.BoxGeometry(2.0, 1.2, 4.2);
+  const carCols = [0xd8dfeb, 0x3a4560, 0xc0392b, 0x2e6da4, 0xe0b94e, 0x6a6f78].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: .5, metalness: .4 }));
+  const lot = new THREE.Group(); lot.position.set(60, 0, 96); scene.add(lot);
+  for (let r = 0; r < 4; r++) for (let ci = 0; ci < 16; ci++) {
+    const car = new THREE.Mesh(carGeo, carCols[(r * 16 + ci) % carCols.length]);
+    car.position.set((ci - 8) * 3.0, 0.6, r * 6.5); lot.add(car);
+  }
+  // 航站楼前旗杆（飘动）
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0xd8dee8, roughness: .5, metalness: .6 });
+  const flagMats = [0xd5202a, 0x2e6da4, 0xe8eef6].map((c) => new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+  const flags = [];
+  for (let i = 0; i < 3; i++) {
+    const px = -16 + i * 16;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(.18, .2, 16, 8), poleMat); pole.position.set(px, 8, 36); scene.add(pole);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(5, 3, 8, 1), flagMats[i]); flag.position.set(px + 2.6, 14, 36); scene.add(flag);
+    flags.push(flag);
+  }
+  // 塔台旋转雷达（塔顶）
+  const radar = new THREE.Group(); radar.position.set(0, 39, 58); scene.add(radar);
+  const dish = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.0, .25), new THREE.MeshStandardMaterial({ color: 0xc9d2de, roughness: .5, metalness: .4 }));
+  dish.position.y = 1; dish.rotation.x = 0.4; radar.add(dish);
+
+  let t = 0;
+  return {
+    winMat,
+    update(dt) {
+      t += dt;
+      radar.rotation.y += dt * 1.3;
+      for (const f of flags) {
+        const pos = f.geometry.attributes.position;
+        for (let v = 0; v < pos.count; v++) {
+          const x = pos.getX(v), k = (x + 2.5) / 5;          // 0 旗杆端、1 自由端
+          pos.setZ(v, Math.sin(x * 2.2 + t * 7) * 0.5 * k);
+        }
+        pos.needsUpdate = true;
+      }
+    },
+  };
+}
+
 /* ============================================================
    应用入口
    ============================================================ */
@@ -805,6 +873,7 @@ scene.traverse((o) => {
   }
 });
 const storm = Object.assign(buildStorm(scene), { intensity: 0, flash: 0, flashTimer: 0, wet: false });
+const distant = buildDistant(scene);
 const contrails = buildContrails(scene);
 const planesGroup = new THREE.Group(); scene.add(planesGroup);
 let meshById = new Map();
@@ -1014,6 +1083,7 @@ function applyDaylight(hour) {
   sky.moon.visible = sky.moonGlow.visible = moonVis > 0.01;
   const nightF = smoothstep(0.06, -0.12, sd.y);
   stars.material.transparent = true; stars.material.opacity = nightF; stars.visible = nightF > 0.01;
+  distant.winMat.emissiveIntensity = 0.04 + nightF * 1.1;   // 城市天际线夜间亮窗
 }
 
 /* 昼夜按钮：自动（跟随时钟）→ 固定白天 → 固定夜间 → 自动 */
@@ -1227,6 +1297,7 @@ function loop(now) {
   contrails.update(realDt);
   apron.update(sim, realDt);
   airfield.update(realDt, storm.intensity);
+  distant.update(realDt);
 
   for (const f of sim.flights) {
     if (f.phase === "departed") {
