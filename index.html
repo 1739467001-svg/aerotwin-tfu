@@ -201,6 +201,15 @@ const {
 /* ============================================================
    渲染层（three.js）
    ============================================================ */
+/* 程序化客舱舷窗带（emissiveMap）：一排暖光小窗，夜间发光 */
+function windowTexture() {
+  const W = 256, Hh = 32, cv = document.createElement("canvas"); cv.width = W; cv.height = Hh;
+  const c = cv.getContext("2d");
+  const n = 16, gap = W / n;
+  for (let i = 0; i < n; i++) { c.fillStyle = "#ffe9b8"; c.fillRect(i * gap + gap * 0.30, Hh * 0.30, gap * 0.40, Hh * 0.40); }
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
 /* 共享几何 / 材质：所有飞机同款，~40 架共用一套（省内存、降 GC；逐机差异仅选择环） */
 const PLANE = {
   geo: {
@@ -208,6 +217,7 @@ const PLANE = {
     wing: new THREE.BoxGeometry(2.6, .22, 11), tailH: new THREE.BoxGeometry(1.6, .18, 4.2), fin: new THREE.BoxGeometry(1.7, 2.3, .22),
     pylon: new THREE.BoxGeometry(1.0, .5, .2), engine: new THREE.CylinderGeometry(.55, .5, 2.6, 12), inlet: new THREE.CircleGeometry(.42, 14),
     windscreen: new THREE.BoxGeometry(.7, .5, 1.0), cabin: new THREE.BoxGeometry(5.4, .34, .05),
+    cheat: new THREE.BoxGeometry(6.6, .16, .03), spinner: new THREE.ConeGeometry(.17, .5, 10),
     dot: new THREE.SphereGeometry(.26, 8, 8), dotS: new THREE.SphereGeometry(.2, 6, 6), trail: new THREE.PlaneGeometry(1, 1),
   },
   mat: {
@@ -215,7 +225,8 @@ const PLANE = {
     acc: new THREE.MeshStandardMaterial({ color: 0xff5347, roughness: .4, metalness: .3, emissive: 0xff5347, emissiveIntensity: .25 }),
     engine: new THREE.MeshStandardMaterial({ color: 0xb7bfce, roughness: .5, metalness: .55 }),
     inlet: new THREE.MeshBasicMaterial({ color: 0x10151f }),
-    window: new THREE.MeshStandardMaterial({ color: 0x223044, roughness: .3, metalness: .2, emissive: 0xffe7b0, emissiveIntensity: .55 }),
+    window: new THREE.MeshStandardMaterial({ color: 0x97a3b8, roughness: .35, metalness: .2, emissive: 0xffe9b8, emissiveMap: windowTexture(), emissiveIntensity: .5 }),
+    cheat: new THREE.MeshStandardMaterial({ color: 0xcf2230, roughness: .45, metalness: .3 }),
     glass: new THREE.MeshStandardMaterial({ color: 0x0a0f18, roughness: .15, metalness: .6, emissive: 0x9fd8ff, emissiveIntensity: .2 }),
     navR: new THREE.MeshBasicMaterial({ color: 0xff2b2b }), navG: new THREE.MeshBasicMaterial({ color: 0x2bff6a }),
     navW: new THREE.MeshBasicMaterial({ color: 0xfff4e0 }), strobe: new THREE.MeshBasicMaterial({ color: 0xffffff }),
@@ -233,9 +244,11 @@ function buildPlaneMesh() {
     add(G.pylon, Mt.body, .7, -.5, z);
     add(G.engine, Mt.engine, 1.0, -.95, z).rotation.z = -Math.PI / 2;
     add(G.inlet, Mt.inlet, 2.32, -.95, z).rotation.y = Math.PI / 2;
+    add(G.spinner, Mt.body, 2.55, -.95, z).rotation.z = -Math.PI / 2;   // 进气整流锥
   }
   add(G.windscreen, Mt.glass, 4.2, .55, 0);      // 驾驶舱风挡
   add(G.cabin, Mt.window, -.2, .35, -.96); add(G.cabin, Mt.window, -.2, .35, .96);   // 两侧客舱舷窗带
+  add(G.cheat, Mt.cheat, -.2, .04, -.99); add(G.cheat, Mt.cheat, -.2, .04, .99);     // 川航红腰线涂装
   add(G.dotS, Mt.navR, .2, -.1, -5.5); add(G.dotS, Mt.navG, .2, -.1, 5.5); add(G.dotS, Mt.navW, -5.2, .3, 0);  // 航行灯 左红/右绿/尾白（常亮）
   const bT = add(G.dot, Mt.beacon, 0, 1.1, 0), bB = add(G.dotS, Mt.beacon, 0, -1.0, 0);                        // 防撞信标 机背/机腹
   const stL = add(G.dotS, Mt.strobe, .2, -.1, -5.7), stR = add(G.dotS, Mt.strobe, .2, -.1, 5.7);               // 白色频闪 翼尖
@@ -1299,6 +1312,7 @@ function applyDaylight(hour) {
   distant.winMat.emissiveIntensity = 0.04 + nightF * 1.1;   // 城市天际线夜间亮窗
   M.curtain.uniforms.glowAmt.value = nightF * 0.4;          // 航站楼幕墙夜间室内透光
   M.terminal.emissiveIntensity = nightF * 0.22;             // 航站楼体夜间暖光
+  PLANE.mat.window.emissiveIntensity = 0.12 + nightF * 0.95; // 客舱舷窗夜间亮起
 }
 
 /* 昼夜按钮：自动（跟随时钟）→ 固定白天 → 固定夜间 → 自动 */
