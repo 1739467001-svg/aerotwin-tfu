@@ -272,6 +272,68 @@ function groundTexture() {
   return tex;
 }
 
+/* 由灰度高度场（取红通道）程序化推导切线空间法线图 */
+function normalMapFrom(ctx, S, str) {
+  const src = ctx.getImageData(0, 0, S, S).data;
+  const ncv = document.createElement("canvas"); ncv.width = ncv.height = S;
+  const nctx = ncv.getContext("2d"), nimg = nctx.createImageData(S, S), nd = nimg.data;
+  const H = (x, y) => src[((((y % S) + S) % S) * S + (((x % S) + S) % S)) * 4] / 255;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const dx = (H(x - 1, y) - H(x + 1, y)) * str, dy = (H(x, y - 1) - H(x, y + 1)) * str;
+    const il = 1 / Math.hypot(dx, dy, 1), o = (y * S + x) * 4;
+    nd[o] = (dx * il * 0.5 + 0.5) * 255; nd[o + 1] = (dy * il * 0.5 + 0.5) * 255; nd[o + 2] = il * 255; nd[o + 3] = 255;
+  }
+  nctx.putImageData(nimg, 0, 0);
+  const t = new THREE.CanvasTexture(ncv); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
+/* 程序化沥青：浅灰底（乘进材质色）+ 细颗粒 + 偶发裂纹；附微起伏法线图 */
+function pavementTexture(o) {
+  o = o || {}; const S = 256;
+  const cv = document.createElement("canvas"); cv.width = cv.height = S; const c = cv.getContext("2d");
+  c.fillStyle = o.base || "#e2e2e2"; c.fillRect(0, 0, S, S);
+  const img = c.getImageData(0, 0, S, S), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * (o.grain || 30); d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  c.putImageData(img, 0, 0);
+  c.strokeStyle = "rgba(0,0,0,.16)"; c.lineWidth = 1;
+  for (let i = 0; i < (o.cracks || 12); i++) {
+    c.beginPath(); let x = Math.random() * S, y = Math.random() * S; c.moveTo(x, y);
+    for (let j = 0; j < 5; j++) { x += (Math.random() - .5) * 46; y += (Math.random() - .5) * 46; c.lineTo(x, y); }
+    c.stroke();
+  }
+  const map = new THREE.CanvasTexture(cv); map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  return { map, normal: normalMapFrom(c, S, o.normalStr || 2.2) };
+}
+
+/* 程序化混凝土：浅底 + 伸缩缝网格 + 油渍；附法线图（缝隙凹陷） */
+function concreteTexture() {
+  const S = 256, cv = document.createElement("canvas"); cv.width = cv.height = S; const c = cv.getContext("2d");
+  c.fillStyle = "#ececec"; c.fillRect(0, 0, S, S);
+  const img = c.getImageData(0, 0, S, S), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 20; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  c.putImageData(img, 0, 0);
+  c.strokeStyle = "rgba(0,0,0,.30)"; c.lineWidth = 2.5;
+  for (let i = 0; i <= 3; i++) { const p = i * S / 3 + 0.5; c.beginPath(); c.moveTo(p, 0); c.lineTo(p, S); c.moveTo(0, p); c.lineTo(S, p); c.stroke(); }
+  for (let i = 0; i < 7; i++) { c.fillStyle = "rgba(0,0,0," + (0.04 + Math.random() * 0.06) + ")"; c.beginPath(); c.arc(Math.random() * S, Math.random() * S, 10 + Math.random() * 28, 0, 7); c.fill(); }
+  const map = new THREE.CanvasTexture(cv); map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  return { map, normal: normalMapFrom(c, S, 3.0) };
+}
+
+/* 程序化轮胎痕：透明底 + 沿滑跑方向的成簇深色胶痕（铺在接地带） */
+function tireMarkTexture() {
+  const S = 256, cv = document.createElement("canvas"); cv.width = cv.height = S; const c = cv.getContext("2d");
+  c.clearRect(0, 0, S, S);
+  for (const cz of [0.34, 0.66]) {              // 两组主轮胶痕
+    for (let i = 0; i < 26; i++) {
+      const z = cz * S + (Math.random() - .5) * 26;
+      c.strokeStyle = "rgba(20,18,22," + (0.10 + Math.random() * 0.28) + ")"; c.lineWidth = 0.8 + Math.random() * 1.6;
+      const x0 = Math.random() * S * 0.5;
+      c.beginPath(); c.moveTo(x0, z); c.lineTo(x0 + S * (0.3 + Math.random() * 0.6), z + (Math.random() - .5) * 6); c.stroke();
+    }
+  }
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; return t;
+}
+
 /* 太阳神鸟金饰：金沙遗址出土，成都市标 / 天府机场文化图腾
    —— 中心 12 道旋转齿芒（太阳），外圈 4 只逆时针环飞神鸟 */
 function drawSunBird(ctx, gold) {
@@ -392,9 +454,16 @@ function buildTerminal(scene, M, birdTex) {
 function buildAirport(scene) {
   const mk = (color, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .95 }, extra));
   /* 昼夜共享材质（applyDaylight 按时刻统一插值改色） */
+  /* 程序化道面纹理（沥青 / 混凝土 + 法线微起伏）；repeat 按各面尺寸调到合理铺装密度 */
+  const asphaltR = pavementTexture({ base: "#dcdcdc", grain: 30, cracks: 10 }); asphaltR.map.repeat.set(20, 1.5); asphaltR.normal.repeat.set(20, 1.5);
+  const asphaltT = pavementTexture({ base: "#d6d6d6", grain: 32, cracks: 14 }); asphaltT.map.repeat.set(26, 1.2); asphaltT.normal.repeat.set(26, 1.2);
+  const cement = concreteTexture(); cement.map.repeat.set(9, 2.4); cement.normal.repeat.set(9, 2.4);
   const M = {
-    ground: mk(0x0a0f1c, { map: groundTexture() }), runway: mk(0x182032), taxi: mk(0x121a2c),
-    apron: mk(0x0e1526), pad: mk(0x101a30), road: mk(0x131c2f),
+    ground: mk(0x0a0f1c, { map: groundTexture() }),
+    runway: mk(0x182032, { map: asphaltR.map, normalMap: asphaltR.normal, normalScale: new THREE.Vector2(.35, .35) }),
+    taxi: mk(0x121a2c, { map: asphaltT.map, normalMap: asphaltT.normal, normalScale: new THREE.Vector2(.35, .35) }),
+    apron: mk(0x0e1526, { map: cement.map, normalMap: cement.normal, normalScale: new THREE.Vector2(.4, .4) }),
+    pad: mk(0x101a30), road: mk(0x131c2f),
     dash: new THREE.MeshBasicMaterial({ color: 0x6b7892 }),
     ring: new THREE.MeshBasicMaterial({ color: 0x24314f, side: THREE.DoubleSide }),
     terminal: mk(0x121b30, { roughness: .6, metalness: .2, emissive: 0x2a1c0c, emissiveIntensity: 0 }),
@@ -402,6 +471,7 @@ function buildAirport(scene) {
     cab: mk(0x223155, { roughness: .95, emissive: 0x16335e, emissiveIntensity: .7 }),
     curtain: makeCurtain(0x2a4673),   // GTC 圆厅 + 两翼玻璃幕墙（菲涅尔天空反射）
   };
+  const tireTex = tireMarkTexture();
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(2200, 1400), M.ground);
   ground.rotation.x = -Math.PI / 2; ground.position.y = -.1; scene.add(ground);
   /* 草坪修剪条纹（机场草地常见的明暗相间带） */
@@ -426,6 +496,9 @@ function buildAirport(scene) {
     const rw = RWY[k];
     const pav = new THREE.Mesh(new THREE.PlaneGeometry(370, 13), M.runway);
     pav.rotation.x = -Math.PI / 2; pav.position.set(0, .02, rw.z); scene.add(pav);
+    /* 接地带 / 滑跑区轮胎胶痕（自西端接地点向东散开）*/
+    const tire = new THREE.Mesh(new THREE.PlaneGeometry(120, 12), new THREE.MeshBasicMaterial({ map: tireTex, transparent: true, depthWrite: false, opacity: .85 }));
+    tire.rotation.x = -Math.PI / 2; tire.position.set(-95, .055, rw.z); scene.add(tire);
     for (let x = -170; x <= 170; x += 18) {
       const dash = new THREE.Mesh(new THREE.PlaneGeometry(9, .7), M.dash);
       dash.rotation.x = -Math.PI / 2; dash.position.set(x, .05, rw.z); scene.add(dash);
