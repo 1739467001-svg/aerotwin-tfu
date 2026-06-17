@@ -642,7 +642,7 @@ function buildApronLife(scene) {
     num.rotation.x = -Math.PI / 2; num.rotation.z = Math.PI;
 
     // 廊桥：航站楼旋转柱 → 伸缩通道 → 接机舱口的活动端
-    const R = { x: gx, y: 3.0, z: 2 }, D = { x: gx - 1.6, z: -7 };
+    const R = { x: gx, y: 3.0, z: 2 }, D = { x: gx - 2.0, z: -6.5 };
     const dx = D.x - R.x, dz = D.z - R.z, fullLen = Math.hypot(dx, dz);
     const bridge = new THREE.Group(); bridge.position.set(R.x, R.y, R.z); bridge.rotation.y = Math.atan2(dx, dz); scene.add(bridge);
     box(bridge, new THREE.CylinderGeometry(1.3, 1.3, 3.4, 12), mat.bridge, 0, 0, 0);
@@ -651,15 +651,21 @@ function buildApronLife(scene) {
     const cab = box(bridge, bg(2.6, 2.6, 1.8), mat.bridge, 0, -.3, 0);
 
     // 地服（停靠时显现）：行李拖车小火车 / 客梯餐车 / GPU 电源车 / 地勤 / 轮挡
-    const gse = new THREE.Group(); gse.position.set(gx, 0, -13); gse.visible = false; scene.add(gse);
-    const train = new THREE.Group(); train.position.set(4.6, 0, 1); gse.add(train);
-    box(train, bg(1.6, 1.1, 1.4), mat.tug, 0, .8, 0); wheels4(train, .7, .5);
-    for (let c = 1; c <= 2; c++) { box(train, bg(1.4, .9, 1.3), mat.cart, 0, .7, c * 1.9); box(train, bg(1.5, .5, 1.4), mat.dark, 0, 1.2, c * 1.9); }
-    const truck = new THREE.Group(); truck.position.set(-5.0, 0, 0); gse.add(truck);
-    box(truck, bg(2.2, 1.4, 2.0), mat.truck, 0, .9, 0); box(truck, bg(1.6, 1.6, 1.8), mat.truck, 0, 2.0, .2); wheels4(truck, .9, .8);
-    box(gse, bg(1.2, 1.0, 1.6), mat.fuel, 1.6, .6, -4);
-    for (const [px, pz] of [[1.3, -1], [-1.5, .7]]) { const p = new THREE.Group(); box(p, bodyGeo, mat.hiviz, 0, .55, 0); box(p, headGeo, mat.head, 0, 1.25, 0); p.position.set(px, 0, pz); gse.add(p); }
-    box(gse, bg(.5, .35, .3), mat.chock, .2, .2, 2.4);
+    const gse = new THREE.Group(); gse.position.set(gx, 0, -10); gse.visible = false; scene.add(gse);  // 原点对齐机身中心
+    // 行李拖车小火车：机尾正后方（远离机身，向 -z 拖出）
+    const train = new THREE.Group(); train.position.set(0.6, 0, -7.8); gse.add(train);
+    box(train, bg(1.5, 1.0, 1.4), mat.tug, 0, .7, 0); wheels4(train, .65, .5);
+    for (let c = 1; c <= 2; c++) { box(train, bg(1.3, .8, 1.2), mat.cart, 0, .6, -c * 1.8); box(train, bg(1.4, .45, 1.3), mat.dark, 0, 1.05, -c * 1.8); }
+    // 客梯/餐车：右翼尖外侧
+    const truck = new THREE.Group(); truck.position.set(7.8, 0, -1); gse.add(truck);
+    box(truck, bg(2.0, 1.3, 2.0), mat.truck, 0, .85, 0); box(truck, bg(1.5, 1.5, 1.7), mat.truck, 0, 1.9, .2); wheels4(truck, .85, .8);
+    // 加油车：左翼尖外侧
+    const fuel = new THREE.Group(); fuel.position.set(-7.9, 0, 0); gse.add(fuel);
+    box(fuel, bg(2.2, 1.1, 1.6), mat.fuel, 0, .7, 0); box(fuel, bg(1.0, .9, 1.4), mat.dark, 0, 1.4, -.6); wheels4(fuel, .9, .7);
+    box(gse, bg(1.1, .9, 1.5), mat.fuel, 3.2, .55, 5.5);   // GPU 电源车：机头右前
+    // 地勤 + 轮挡（机头前方、低矮，不触机身）
+    for (const [px, pz] of [[2.4, 4.0], [-2.6, 4.5]]) { const p = new THREE.Group(); box(p, bodyGeo, mat.hiviz, 0, .55, 0); box(p, headGeo, mat.head, 0, 1.25, 0); p.position.set(px, 0, pz); gse.add(p); }
+    box(gse, bg(.5, .3, .3), mat.chock, 1.3, .18, 0);
 
     rigs.push({ tunnel, tGlass, cab, fullLen, gse, dock: 0, _occ: false });
   }
