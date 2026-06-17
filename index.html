@@ -26,12 +26,14 @@
   button.closed { border-color: var(--accent); color: var(--accent); animation: atPulse 1.2s infinite; }
   button:disabled { cursor: default; }
   @keyframes atPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-  #topbar { top: 14px; left: 14px; right: 14px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+  #topbar { top: 14px; left: 14px; right: 14px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; z-index: 20; }
   .logo { font-weight: 900; font-size: 15px; letter-spacing: 2px; white-space: nowrap; }
   .logo b { color: var(--accent); }
   .logo small { color: var(--dim); font-size: 11px; margin-left: 10px; font-weight: 400; }
   #clock { margin-left: auto; font-size: 19px; font-weight: 700; letter-spacing: 2px; }
   .btn-group { display: flex; gap: 6px; }
+  #topControls { display: flex; align-items: center; gap: 12px; }
+  #btnMenu { display: none; font-size: 16px; }
   #flightPanel { top: 80px; left: 14px; width: 252px; bottom: 14px; display: flex; flex-direction: column; }
   #flightHeader { padding: 10px 14px; font-size: 11px; color: var(--dim); letter-spacing: 2px; border-bottom: 1px solid var(--border); }
   #flightHeader em { color: var(--amber); font-style: normal; }
@@ -91,15 +93,25 @@
     #logPanel { left: 230px; right: 168px; }
     #camPanel { width: 126px; }
   }
-  /* —— 手机 —— */
+  /* —— 手机：顶栏单行 + ☰ 抽屉菜单（高度固定可控）—— */
   @media (max-width: 760px) {
     .logo { font-size: 13px; letter-spacing: 1px; }
     .logo small { display: none; }
-    #topbar { top: 8px; left: 8px; right: 8px; height: auto; flex-wrap: wrap; gap: 7px; row-gap: 6px; padding: 8px 10px; }
-    #clock { font-size: 16px; margin-left: auto; }
+    #topbar { top: 8px; left: 8px; right: 8px; height: 50px; gap: 8px; padding: 0 12px; }
+    #clock { font-size: 16px; }
     button { padding: 7px 11px; }
-    #flightPanel { top: 116px; left: 8px; width: 44vw; max-width: 220px; max-height: 42vh; }
-    #kpiPanel { top: 116px; right: 8px; width: 50vw; max-width: 232px; max-height: 52vh; overflow-y: auto; padding: 10px; }
+    #btnMenu { display: flex; align-items: center; justify-content: center; }
+    #topControls {
+      position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; display: none;
+      flex-direction: column; align-items: stretch; gap: 8px; min-width: 196px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px; backdrop-filter: blur(8px);
+    }
+    #topbar.menu-open #topControls { display: flex; }
+    #topControls .btn-group { display: flex; gap: 6px; }
+    #topControls .btn-group button { flex: 1; }
+    #topControls > button { width: 100%; }
+    #flightPanel { top: 70px; left: 8px; width: 44vw; max-width: 220px; max-height: 44vh; }
+    #kpiPanel { top: 70px; right: 8px; width: 50vw; max-width: 232px; max-height: 56vh; overflow-y: auto; padding: 10px; }
     #logPanel { left: 8px; right: 8px; bottom: 8px; max-height: 72px; }
     #camPanel { right: 8px; bottom: 92px; width: 132px; }
   }
@@ -111,19 +123,22 @@
 
 <div id="topbar" class="panel">
   <div class="logo"><b>天府</b>TWIN<small>成都天府国际机场 TFU · 调度算法 A/B 影子仿真</small></div>
-  <div class="btn-group">
-    <button id="btnFcfs">基线 FCFS</button>
-    <button id="btnSmart" class="on">智能调度</button>
+  <div id="topControls">
+    <div class="btn-group">
+      <button id="btnFcfs">基线 FCFS</button>
+      <button id="btnSmart" class="on">智能调度</button>
+    </div>
+    <div class="btn-group">
+      <button data-speed="1">1×</button>
+      <button data-speed="10" class="on">10×</button>
+      <button data-speed="60">60×</button>
+      <button id="btnPause">⏸</button>
+    </div>
+    <button id="btnStorm" class="warn">⛈ 雷暴关闭 02R</button>
+    <button id="btnTheme">🌙 夜间</button>
   </div>
   <div id="clock">06:00:00</div>
-  <div class="btn-group">
-    <button data-speed="1">1×</button>
-    <button data-speed="10" class="on">10×</button>
-    <button data-speed="60">60×</button>
-    <button id="btnPause">⏸</button>
-  </div>
-  <button id="btnStorm" class="warn">⛈ 雷暴关闭 02R</button>
-  <button id="btnTheme">🌙 夜间</button>
+  <button id="btnMenu" aria-label="菜单">☰</button>
 </div>
 
 <div id="flightPanel" class="panel">
@@ -1306,6 +1321,9 @@ function syncCamButtons() {
   btnFollow.classList.toggle("on", follow);
 }
 syncCamButtons();
+
+/* ------- 顶栏抽屉菜单（手机）------- */
+$("btnMenu").onclick = () => $("topbar").classList.toggle("menu-open");
 
 /* ------- 面板收展（适配手机 / 平板）------- */
 function setCollapsed(panel, on) {
