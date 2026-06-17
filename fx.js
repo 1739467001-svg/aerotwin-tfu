@@ -27,6 +27,8 @@
     fxaa:  { enabled: true },
     // ACES 高光柔化 + 轻度 sRGB，调和深空配色（invGamma：1.0=纯 ACES 不提亮，0.9=默认微提，0.4545=完整 sRGB 较亮）
     tone:  { enabled: true, exposure: 1.0, invGamma: 0.9 },
+    // 热浪扰动：屏幕带状折射（band=带中心屏幕Y、width=带半高、amount=最大偏移）
+    heat:  { enabled: true, amount: 0.0022, band: 0.4, width: 0.26 },
   };
 
   const VERT = "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }";
@@ -64,17 +66,24 @@
     "uniform sampler2D tScene; uniform sampler2D tSceneBlur; uniform sampler2D tBloom;",
     "uniform float bloomStrength; uniform float focusY; uniform float range; uniform float dofStrength;",
     "uniform int dofOn; uniform int bloomOn; uniform int toneOn; uniform float exposure; uniform float invGamma;",
+    "uniform int heatOn; uniform float heatAmt; uniform float heatBand; uniform float heatWidth; uniform float time;",
     "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }",
     "void main(){",
-    "  vec3 col = texture2D(tScene, vUv).rgb;",
+    "  vec2 uv = vUv;",
+    "  if (heatOn == 1) {",                              // 跑道/喷流热浪：屏幕带状折射扰动
+    "    float mask = smoothstep(heatWidth, 0.0, abs(vUv.y - heatBand));",
+    "    float w = sin(vUv.x * 38.0 + time * 2.3) * sin(vUv.y * 70.0 + time * 3.1);",
+    "    uv.x += w * heatAmt * mask; uv.y += w * heatAmt * 0.5 * mask;",
+    "  }",
+    "  vec3 col = texture2D(tScene, uv).rgb;",
     "  if (dofOn == 1) {",
-    "    vec3 blurd = texture2D(tSceneBlur, vUv).rgb;",
+    "    vec3 blurd = texture2D(tSceneBlur, uv).rgb;",
     "    float d = abs(vUv.y - focusY);",
     "    float coc = clamp((d - range) / max(range, 1e-4), 0.0, 1.0);",
     "    coc = pow(coc, 1.3) * dofStrength;",
     "    col = mix(col, blurd, coc);",
     "  }",
-    "  if (bloomOn == 1) { col += texture2D(tBloom, vUv).rgb * bloomStrength; }",
+    "  if (bloomOn == 1) { col += texture2D(tBloom, uv).rgb * bloomStrength; }",
     "  if (toneOn == 1) { col *= exposure; col = aces(col); col = pow(col, vec3(invGamma)); }",
     "  gl_FragColor = vec4(col, 1.0);",
     "}",
@@ -133,6 +142,7 @@
       range: { value: cfg.dof.range }, dofStrength: { value: cfg.dof.strength },
       dofOn: { value: cfg.dof.enabled ? 1 : 0 }, bloomOn: { value: cfg.bloom.enabled ? 1 : 0 },
       toneOn: { value: cfg.tone.enabled ? 1 : 0 }, exposure: { value: cfg.tone.exposure }, invGamma: { value: cfg.tone.invGamma },
+      heatOn: { value: cfg.heat.enabled ? 1 : 0 }, heatAmt: { value: cfg.heat.amount }, heatBand: { value: cfg.heat.band }, heatWidth: { value: cfg.heat.width }, time: { value: 0 },
     });
     const mFxaa   = shader(FRAG_FXAA,   { tDiffuse: { value: null }, texel: { value: new THREE.Vector2() } });
     const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mCopy);
@@ -186,6 +196,7 @@
       mComp.uniforms.tScene.value = rtScene.texture;                         // ④ 合成
       mComp.uniforms.tSceneBlur.value = sceneBlurTex;
       mComp.uniforms.tBloom.value = bloomTex;
+      mComp.uniforms.time.value = performance.now() * 0.001;
       draw(mComp, cfg.fxaa.enabled ? rtFinal : null);
 
       if (cfg.fxaa.enabled) {                                                // ⑤ 抗锯齿
@@ -209,6 +220,10 @@
       mComp.uniforms.toneOn.value = cfg.tone.enabled ? 1 : 0;
       mComp.uniforms.exposure.value = cfg.tone.exposure;
       mComp.uniforms.invGamma.value = cfg.tone.invGamma;
+      mComp.uniforms.heatOn.value = cfg.heat.enabled ? 1 : 0;
+      mComp.uniforms.heatAmt.value = cfg.heat.amount;
+      mComp.uniforms.heatBand.value = cfg.heat.band;
+      mComp.uniforms.heatWidth.value = cfg.heat.width;
     }
 
     return { render, setSize, dispose, apply, cfg };
