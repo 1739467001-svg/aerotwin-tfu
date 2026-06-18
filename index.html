@@ -149,6 +149,7 @@
       <button id="btnPause">⏸</button>
     </div>
     <select id="weatherSel" class="wsel" aria-label="天气">
+      <option value="auto">🌦️ 自动天气</option>
       <option value="clear">☀️ 晴</option>
       <option value="overcast">☁️ 阴</option>
       <option value="rain">🌧️ 雨</option>
@@ -672,7 +673,24 @@ function buildWeather(scene) {
   sgeo.setAttribute("position", new THREE.Float32BufferAttribute(spos, 3));
   const snow = new THREE.Points(sgeo, new THREE.PointsMaterial({ color: 0xeef4ff, size: 2.4, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false }));
   snow.position.set(0, 0, -60); snow.frustumCulled = false; snow.visible = false; scene.add(snow);
-  return { rain, drops, snow, flakes, TOP };
+  // 闪电折线（雷暴击发时即时生成锯齿状路径）
+  const BMAX = 14, bpos = new Float32Array(BMAX * 6);
+  const bgeo = new THREE.BufferGeometry();
+  bgeo.setAttribute("position", new THREE.Float32BufferAttribute(bpos, 3));
+  const bolt = new THREE.LineSegments(bgeo, new THREE.LineBasicMaterial({ color: 0xe6ecff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  bolt.frustumCulled = false; bolt.visible = false; scene.add(bolt);
+  function strike() {
+    const x = (Math.random() * 2 - 1) * 220, z = -50 + (Math.random() * 2 - 1) * 130;
+    const arr = bolt.geometry.attributes.position.array, n = BMAX, step = 210 / (n - 1);
+    let px = x, py = 210, pz = z;
+    for (let i = 0; i < n; i++) {
+      const nx = x + (Math.random() - 0.5) * 26, ny = 210 - i * step, nz = z + (Math.random() - 0.5) * 26, o = i * 6;
+      arr[o] = px; arr[o + 1] = py; arr[o + 2] = pz; arr[o + 3] = nx; arr[o + 4] = ny; arr[o + 5] = nz;
+      px = nx; py = ny; pz = nz;
+    }
+    bolt.geometry.attributes.position.needsUpdate = true;
+  }
+  return { rain, drops, snow, flakes, TOP, bolt, strike };
 }
 
 /* ------- 世界空间凝结尾迹：环形池化的消散气团（脱离飞机、留在空中渐隐扩散）------- */
@@ -1107,7 +1125,7 @@ scene.traverse((o) => {
   }
 });
 const weather = Object.assign(buildWeather(scene), {
-  type: "clear", flash: 0, flashTimer: 0, wet: false,
+  type: "clear", flash: 0, flashTimer: 0, wet: false, windDir: 0.6, windSpeed: 0.2,
   cur: { sun: 1, amb: 1, fogMul: 1, cloud: 0, wet: 0, rain: 0, snow: 0, light: 0, tint: 0 },
   fogC: new THREE.Color(0x808890), skyTopC: new THREE.Color(0x808890), skyHorC: new THREE.Color(0x808890),
   ambCC: new THREE.Color(0x808890), cloudCC: new THREE.Color(0x808890),
@@ -1374,6 +1392,10 @@ function applyWeather(dt) {
   c.snow += (T.snow - c.snow) * k; c.light += (T.light - c.light) * k; c.tint += (T.tint - c.tint) * k;
   weather.fogC.lerp(_wtmp.setHex(T.fog), k); weather.skyTopC.lerp(_wtmp.setHex(T.top), k);
   weather.skyHorC.lerp(_wtmp.setHex(T.hor), k); weather.ambCC.lerp(_wtmp.setHex(T.ambc), k); weather.cloudCC.lerp(_wtmp.setHex(T.cloudc), k);
+  // 风场：风速随天气（雨/雷暴大风、雾平静），风向缓慢转
+  const tWind = Math.min(1, 0.12 + c.rain * 0.45 + c.light * 0.4 + c.snow * 0.15);
+  weather.windSpeed += (tWind - weather.windSpeed) * Math.min(1, dt * 0.5);
+  weather.windDir += dt * 0.05;
 
   const tint = c.tint;
   if (tint < 0.01 && c.rain < 0.01 && c.snow < 0.01 && c.wet < 0.01) {   // 基本晴朗：还原并退出
@@ -1396,7 +1418,7 @@ function applyWeather(dt) {
   weather.wet = c.wet > 0.02;
   // 闪电（仅雷暴）：随机白闪、快速衰减，闪时全场骤亮（经 Bloom 炸开）
   weather.flashTimer -= dt;
-  if (c.light > 0.45 && weather.flashTimer <= 0) { weather.flash = 1; weather.flashTimer = 2.2 + Math.random() * 5.5; }
+  if (c.light > 0.45 && weather.flashTimer <= 0) { weather.flash = 1; weather.flashTimer = 2.2 + Math.random() * 5.5; weather.strike(); }
   weather.flash = Math.max(0, weather.flash - dt * 6);
   const fl = weather.flash * c.light;
   if (fl > 0.001) {
@@ -1404,22 +1426,50 @@ function applyWeather(dt) {
     scene.fog.color.lerp(FLASHC, fl * 0.6);
     sky.skyU.topColor.value.lerp(FLASHC, fl * 0.5); sky.skyU.bottomColor.value.lerp(FLASHC, fl * 0.5);
   }
+  weather.bolt.visible = fl > 0.06; weather.bolt.material.opacity = Math.min(1, fl * 2.2);
   scene.background.copy(scene.fog.color);
-  // 雨幕（真实时间下落，与仿真倍速解耦）
+  const wx = Math.cos(weather.windDir) * weather.windSpeed, wz = Math.sin(weather.windDir) * weather.windSpeed;
+  // 雨幕（真实时间下落、与仿真倍速解耦；雨丝按风斜）
   if (c.rain > 0.01) {
-    const arr = weather.rain.geometry.attributes.position.array;
-    for (const d of weather.drops) { let y = arr[d.o + 1] - d.speed * dt; if (y < 0) y += weather.TOP; arr[d.o + 1] = y; arr[d.o + 4] = y + d.len; }
+    const arr = weather.rain.geometry.attributes.position.array, sx = wx * 7, sz = wz * 7;
+    for (const d of weather.drops) { let y = arr[d.o + 1] - d.speed * dt; if (y < 0) y += weather.TOP; arr[d.o + 1] = y; arr[d.o + 4] = y + d.len; arr[d.o + 3] = arr[d.o] + sx; arr[d.o + 5] = arr[d.o + 2] + sz; }
     weather.rain.geometry.attributes.position.needsUpdate = true;
     weather.rain.material.opacity = 0.5 * c.rain; weather.rain.visible = true;
   } else weather.rain.visible = false;
-  // 雪（缓降 + 横向漂移）
+  // 雪（缓降 + 横向漂移 + 随风）
   if (c.snow > 0.01) {
-    const arr = weather.snow.geometry.attributes.position.array;
-    for (const f of weather.flakes) { let y = arr[f.o + 1] - f.speed * dt; if (y < 0) y += weather.TOP; arr[f.o + 1] = y; arr[f.o] += Math.sin(y * 0.1 + f.drift) * f.amp * dt * 0.3; }
+    const arr = weather.snow.geometry.attributes.position.array, swx = wx * 10, swz = wz * 10;
+    for (const f of weather.flakes) { let y = arr[f.o + 1] - f.speed * dt; if (y < 0) y += weather.TOP; arr[f.o + 1] = y; arr[f.o] += (Math.sin(y * 0.1 + f.drift) * f.amp * 0.3 + swx) * dt; arr[f.o + 2] += swz * dt; }
     weather.snow.geometry.attributes.position.needsUpdate = true;
     weather.snow.material.opacity = 0.85 * c.snow; weather.snow.visible = true;
   } else weather.snow.visible = false;
 }
+/* 动态自动天气：按仿真时刻随机演化（晨雾多发、午后易雷暴；成都罕见雪，自动不选雪）*/
+const WX_NEXT = {
+  clear: ["clear", "clear", "overcast", "fog"],
+  overcast: ["clear", "overcast", "overcast", "rain", "fog"],
+  rain: ["overcast", "rain", "storm", "overcast"],
+  storm: ["rain", "overcast"],
+  fog: ["fog", "overcast", "clear"],
+  snow: ["overcast", "snow"],
+};
+let autoWeather = true, wxNext = 1500;
+function nextWeather(cur, hour) {
+  if (hour >= 4.5 && hour <= 8 && cur !== "storm" && Math.random() < 0.4) return "fog";          // 辐射晨雾
+  if (hour >= 13 && hour <= 18.5 && (cur === "overcast" || cur === "rain") && Math.random() < 0.45) return "storm";  // 午后雷暴
+  const o = WX_NEXT[cur] || ["clear"]; return o[Math.floor(Math.random() * o.length)];
+}
+function tickAutoWeather() {
+  if (!autoWeather) return;
+  const t = sims.smart.t;
+  if (t < wxNext) return;
+  const hour = (((sims.smart.clockBase + t) / 3600) % 24 + 24) % 24;
+  weather.type = nextWeather(weather.type, hour);
+  if (weather.type === "storm" && sims.smart.t >= sims.smart.runways.B.closedUntil)
+    for (const k of ["fcfs", "smart"]) { sims[k].runways.B.closedUntil = sims[k].t + 300; log(sims[k], "⛈ 雷暴过境：02R 关闭"); }
+  wxNext = t + 3600 + Math.random() * 7200;   // 1–3 仿真小时后再变
+}
+
 function setView(v) {
   view = v; selectedId = null;
   btnFcfs.className = v === "fcfs" ? "on-blue" : "";
@@ -1436,10 +1486,10 @@ document.querySelectorAll("[data-speed]").forEach((b) => {
 btnPause.onclick = () => { paused = !paused; btnPause.textContent = paused ? "▶" : "⏸"; };
 const weatherSel = $("weatherSel");
 weatherSel.onchange = () => {
-  weather.type = weatherSel.value;
-  if (weather.type === "storm" && sims.smart.t >= sims.smart.runways.B.closedUntil) {   // 雷暴联动关 02R
+  if (weatherSel.value === "auto") { autoWeather = true; wxNext = sims.smart.t; return; }   // 立即进入自动演化
+  autoWeather = false; weather.type = weatherSel.value;
+  if (weather.type === "storm" && sims.smart.t >= sims.smart.runways.B.closedUntil)          // 手动雷暴联动关 02R
     for (const k of ["fcfs", "smart"]) { sims[k].runways.B.closedUntil = sims[k].t + 300; log(sims[k], "⛈ 雷暴：跑道 02R 关闭 5 分钟"); }
-  }
 };
 $("flightList").addEventListener("click", (e) => {
   const row = e.target.closest("[data-fid]");
@@ -1582,11 +1632,12 @@ function loop(now) {
   }
   const sim = sims[renderedView];
   applyDaylight(timeHour(((((sim.clockBase + sim.t) / 3600) % 24) + 24) % 24));
+  tickAutoWeather();
   applyWeather(realDt);
   updateCamera(realDt);
   contrails.update(realDt);
   apron.update(sim, realDt);
-  airfield.update(realDt, Math.min(1, weather.cur.rain * 0.5 + weather.cur.light * 0.6 + weather.cur.snow * 0.2));
+  airfield.update(realDt, weather.windSpeed);
   distant.update(realDt);
   aerial.update(realDt, smoothstep(-0.05, 0.18, sd.y));
   if (fx && fx.setSun) {   // 太阳光柱：喂入太阳屏幕位置 + 可见性（在画面内且地平线之上）
@@ -1666,7 +1717,7 @@ function loop(now) {
     p.rotation.y = Math.cos(ph) >= 0 ? 0 : Math.PI;
   }
   for (const c of sky.clouds.children) {
-    c.position.x += c.userData.vx * realDt;
+    c.position.x += c.userData.vx * realDt * (0.5 + weather.windSpeed * 2.2);   // 云随风速漂移
     if (c.position.x > 560) c.position.x = -560;
   }
 
