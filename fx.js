@@ -27,8 +27,8 @@
     fxaa:  { enabled: true },
     // ACES 高光柔化 + 轻度 sRGB，调和深空配色（invGamma：1.0=纯 ACES 不提亮，0.9=默认微提，0.4545=完整 sRGB 较亮）
     tone:  { enabled: true, exposure: 1.0, invGamma: 0.9 },
-    // 热浪扰动：屏幕带状折射（band=带中心屏幕Y、width=带半高、amount=最大偏移）
-    heat:  { enabled: true, amount: 0.0022, band: 0.4, width: 0.26 },
+    // 热浪扰动：屏幕带状折射（默认关——持续全屏扰动易被看作画面抖动；需要可 AEROTWIN_FX.cfg.heat.enabled=true）
+    heat:  { enabled: false, amount: 0.0011, band: 0.5, width: 0.14 },
     // SSAO 环境光遮蔽（实验，默认关：盲调风险高，开启评估 AEROTWIN_FX.cfg.ssao.enabled=true）
     ssao:  { enabled: false, radius: 0.7, strength: 1.1, bias: 0.03, scale: 2 },
     // 太阳光柱（径向光晕，仅太阳在画面且地平线之上时显现；复用泛光亮度缓冲）
