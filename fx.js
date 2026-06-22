@@ -22,11 +22,11 @@
      控制台实时调： AEROTWIN_FX.cfg.bloom.strength = 1.3; AEROTWIN_FX.apply();           */
   const DEFAULTS = {
     enabled: true,
-    bloom: { enabled: true, threshold: 0.72, knee: 0.20, strength: 0.95, radius: 1.0, iterations: 3, scale: 4 },
+    bloom: { enabled: true, threshold: 0.85, knee: 0.18, strength: 0.72, radius: 1.0, iterations: 3, scale: 4 },
     dof:   { enabled: true, focusY: 0.52, range: 0.16, strength: 0.62, radius: 1.4, iterations: 2, scale: 2 },
     fxaa:  { enabled: true },
     // ACES 高光柔化 + 轻度 sRGB，调和深空配色（invGamma：1.0=纯 ACES 不提亮，0.9=默认微提，0.4545=完整 sRGB 较亮）
-    tone:  { enabled: true, exposure: 1.0, invGamma: 0.9 },
+    tone:  { enabled: true, exposure: 0.96, invGamma: 0.97 },
     // 热浪扰动：屏幕带状折射（默认关——持续全屏扰动易被看作画面抖动；需要可 AEROTWIN_FX.cfg.heat.enabled=true）
     heat:  { enabled: false, amount: 0.0011, band: 0.5, width: 0.14 },
     // SSAO 环境光遮蔽（实验，默认关：盲调风险高，开启评估 AEROTWIN_FX.cfg.ssao.enabled=true）
