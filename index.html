@@ -158,6 +158,7 @@
       <option value="snow">❄️ 雪</option>
     </select>
     <button id="btnTheme">🌙 夜间</button>
+    <button id="btnMusic">🎵 音乐</button>
   </div>
   <div id="clock">06:00:00</div>
   <button id="btnMenu" aria-label="菜单">☰</button>
@@ -201,6 +202,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="sim.js"></script>
 <script src="fx.js"></script>
+<script src="audio.js"></script>
 <script>
 /* ============================================================
    AEROTWIN web · 渲染 / UI 层（three.js）
@@ -1516,6 +1518,12 @@ syncCamButtons();
 /* ------- 顶栏控制台：把手一键收起 / 展开整条控制栏 ------- */
 const btnBar = $("btnBar");
 btnBar.onclick = () => { btnBar.textContent = $("topbar").classList.toggle("hidden") ? "▾" : "▴"; };
+
+/* ------- 背景音乐：生成式环境乐，点击在用户手势中启动 ------- */
+const audio = (window.AeroAudio && AeroAudio.create) ? AeroAudio.create() : null;
+const btnMusic = $("btnMusic");
+if (audio) btnMusic.onclick = () => { const on = audio.toggle(); btnMusic.classList.toggle("on", on); btnMusic.textContent = on ? "🔊 音乐" : "🎵 音乐"; };
+else if (btnMusic) btnMusic.style.display = "none";
 
 /* ------- 顶栏抽屉菜单（手机）：☰ 开合，选完任一控件即收起 ------- */
 $("btnMenu").onclick = () => $("topbar").classList.toggle("menu-open");
